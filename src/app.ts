@@ -96,7 +96,7 @@ const getAssistantResponse = async (assistantId, message, state, fallbackMessage
     return Promise.race([askPromise, timeoutPromise]);
 };
 
-const processUserMessage = async (
+export const processUserMessage = async (
     ctx,
     { flowDynamic, state, provider, gotoFlow }
 ) => {
