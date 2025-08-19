@@ -1,0 +1,10 @@
+dist/*
+node_modules
+temp/voiceNote
+!tmp/.gitkeep
+
+*_sessions
+.wwebjs*
+
+*.log
+*qr.png

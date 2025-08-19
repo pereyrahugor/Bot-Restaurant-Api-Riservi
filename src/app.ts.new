@@ -1,0 +1,592 @@
+import "dotenv/config";
+import { createBot, createProvider, createFlow, addKeyword, EVENTS } from "@builderbot/bot";
+import { MemoryDB } from "@builderbot/bot";
+import { BaileysProvider } from "@builderbot/provider-baileys";
+import { toAsk, httpInject } from "@builderbot-plugins/openai-assistants";
+import { typing } from "./utils/presence";
+import { idleFlow } from "./Flows/idleFlow";
+import { welcomeFlowTxt } from "./Flows/welcomeFlowTxt";
+import { welcomeFlowVoice } from "./Flows/welcomeFlowVoice";
+import { welcomeFlowImg } from "./Flows/welcomeFlowImg";
+import { ErrorReporter } from "./utils/errorReporter";
+import { createReservation, checkAvailability } from "./utils/riservi";
+
+/** Puerto en el que se ejecutará el servidor */
+const PORT = process.env.PORT ?? "";
+/** ID del asistente de OpenAI */
+const ASSISTANT_ID = process.env.ASSISTANT_ID;
+const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_WS ?? "";
+
+const userQueues = new Map();
+const userLocks = new Map();
+
+const adapterProvider = createProvider(BaileysProvider, {
+    groupsIgnore: false,
+    readStatus: false,
+});
+
+const errorReporter = new ErrorReporter(adapterProvider, ID_GRUPO_RESUMEN);
+
+const TIMEOUT_MS = 30000;
+
+// Control de timeout por usuario para evitar ejecuciones automáticas superpuestas
+const userTimeouts = new Map();
+const userActiveRuns = new Map();
+
+// Función mejorada para manejar la respuesta del asistente con reintentos y control de concurrencia
+const getAssistantResponse = async (assistantId, message, state, fallbackMessage, userId, retryCount = 0) => {
+  // Si hay un run activo para este usuario, espera antes de continuar
+  if (userActiveRuns.get(userId)) {
+    if (retryCount >= 5) throw new Error("Demasiadas solicitudes concurrentes al asistente. Intenta nuevamente en unos segundos.");
+    await new Promise(res => setTimeout(res, 4000 * (retryCount + 1)));
+    return getAssistantResponse(assistantId, message, state, fallbackMessage, userId, retryCount + 1);
+  }
+  
+  userActiveRuns.set(userId, true);
+  
+  try {
+    // Si hay un timeout previo, lo limpiamos
+    if (userTimeouts.has(userId)) {
+      clearTimeout(userTimeouts.get(userId));
+      userTimeouts.delete(userId);
+    }
+    
+    let timeoutResolve;
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutResolve = resolve;
+      const timeoutId = setTimeout(() => {
+        console.log("⏱ Timeout alcanzado. Reintentando con mensaje de control...");
+        resolve(toAsk(assistantId, fallbackMessage ?? message, state));
+        userTimeouts.delete(userId);
+      }, TIMEOUT_MS);
+      userTimeouts.set(userId, timeoutId);
+    });
+    
+    const askPromise = toAsk(assistantId, message, state)
+      .then((result) => {
+        if (userTimeouts.has(userId)) {
+          clearTimeout(userTimeouts.get(userId));
+          userTimeouts.delete(userId);
+        }
+        timeoutResolve(result);
+        return result;
+      })
+      .catch(async (error) => {
+        // Manejo de error de run activo
+        if (
+          error?.error?.message &&
+          error.error.message.includes("while a run") &&
+          error.error.message.includes("is active") &&
+          retryCount < 5
+        ) {
+          console.warn("Run activo, esperando para reintentar...");
+          await new Promise(res => setTimeout(res, 4000 * (retryCount + 1)));
+          return getAssistantResponse(assistantId, message, state, fallbackMessage, userId, retryCount + 1);
+        }
+        throw error;
+      });
+      
+    return await Promise.race([askPromise, timeoutPromise]);
+  } finally {
+    userActiveRuns.delete(userId);
+  }
+};
+
+// Función para extraer información de reserva del mensaje del usuario
+const extractReservaIntent = (text) => {
+    // Busca patrones como "para 4 personas el 28 de junio a las 20:30" o similares
+    const regex = /(para\s+)?(\d{1,2})\s+personas?[^\d]*(\d{4}-\d{2}-\d{2}|\d{1,2} de [a-zA-Z]+|hoy|mañana)[^\d]*(\d{1,2}:\d{2})?/i;
+    const match = text.match(regex);
+    if (match) {
+        let partySize = parseInt(match[2], 10);
+        let dateStr = match[3];
+        let timeStr = match[4] || "20:00"; // Hora por defecto si no se especifica
+        
+        // Normaliza fecha
+        let date;
+        if (/\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+            date = dateStr;
+        } else if (/\d{1,2} de [a-zA-Z]+/i.test(dateStr)) {
+            // Convierte "28 de junio" a "2025-06-28" usando la fecha actual como referencia
+            const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+            const partes = dateStr.split(" de ");
+            const dia = partes[0].padStart(2, '0');
+            const mes = meses.findIndex(m => m.startsWith(partes[1].toLowerCase())) + 1;
+            const mesStr = mes.toString().padStart(2, '0');
+            const year = new Date().getFullYear();
+            date = `${year}-${mesStr}-${dia}`;
+        } else if (/hoy/i.test(dateStr)) {
+            const now = new Date();
+            date = now.toISOString().slice(0,10);
+        } else if (/mañana/i.test(dateStr)) {
+            const now = new Date();
+            now.setDate(now.getDate() + 1);
+            date = now.toISOString().slice(0,10);
+        }
+        
+        if (date && timeStr) {
+            return {
+                partySize,
+                date: `${date} ${timeStr}`
+            };
+        }
+    }
+    return null;
+};
+
+// Función principal para procesar los mensajes de los usuarios
+const processUserMessage = async (
+    ctx,
+    { flowDynamic, state, provider, gotoFlow }
+) => {
+    await typing(ctx, provider);
+    try {
+        console.log("[Bot] Procesando mensaje del usuario:", ctx.body);
+        
+        // 1. Obtener respuesta del asistente
+        const assistantResponse = await getAssistantResponse(
+            ASSISTANT_ID, 
+            ctx.body, 
+            state, 
+            "Por favor, responde aunque sea brevemente.", 
+            ctx.from
+        );
+        
+        // 2. Extraer datos de la respuesta del asistente
+        let reservaData = null;
+        let disponibleData = null;
+        let responseText = "";
+        
+        console.log("[Bot] Respuesta completa del asistente:", 
+            typeof assistantResponse === "object" ? JSON.stringify(assistantResponse) : assistantResponse);
+        
+        // 2.1 Revisar si assistantResponse tiene toolCall con outputs
+        if (typeof assistantResponse === "object" && 
+            assistantResponse.toolCall && 
+            assistantResponse.toolCall.code_interpreter && 
+            Array.isArray(assistantResponse.toolCall.code_interpreter.outputs)) {
+                
+            for (const output of assistantResponse.toolCall.code_interpreter.outputs) {
+                if (typeof output === "object" && output.type === "#RESERVA#") {
+                    reservaData = output;
+                    break;
+                } else if (typeof output === "object" && output.type === "#DISPONIBLE#") {
+                    disponibleData = output;
+                    break;
+                } else if (typeof output === "string") {
+                    try {
+                        const parsed = JSON.parse(output);
+                        if (parsed && parsed.type === "#RESERVA#") {
+                            reservaData = parsed;
+                            break;
+                        } else if (parsed && parsed.type === "#DISPONIBLE#") {
+                            disponibleData = parsed;
+                            break;
+                        }
+                    } catch (e) {
+                        console.error("[Bot] Error al analizar JSON en la salida del asistente (toolCall):", e.message);
+                    }
+                }
+            }
+        }
+        
+        // 2.2 Si no se encontró en toolCall, buscar en texto plano
+        if (!reservaData && !disponibleData) {
+            if (typeof assistantResponse === "string") {
+                const reservaMatch = assistantResponse.match(/```json[\s\n]*({[\s\S]*?"type"\s*:\s*"#RESERVA#"[\s\S]*?})[\s\n]*```/i)
+                    || assistantResponse.match(/\{[\s\S]*?"type"\s*:\s*"#RESERVA#"[\s\S]*?\}/);
+                const disponibleMatch = assistantResponse.match(/```json[\s\n]*({[\s\S]*?"type"\s*:\s*"#DISPONIBLE#"[\s\S]*?})[\s\n]*```/i)
+                    || assistantResponse.match(/\{[\s\S]*?"type"\s*:\s*"#DISPONIBLE#"[\s\S]*?\}/);
+                
+                if (reservaMatch) {
+                    let jsonStr = reservaMatch[1] || reservaMatch[0];
+                    try {
+                        jsonStr = jsonStr.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+                        const parsed = JSON.parse(jsonStr);
+                        if (parsed && parsed.type === "#RESERVA#") {
+                            reservaData = parsed;
+                        }
+                    } catch (e) {
+                        console.error("[Bot] Error al analizar JSON de reserva:", e.message, "JSON:", jsonStr);
+                    }
+                } else if (disponibleMatch) {
+                    let jsonStr = disponibleMatch[1] || disponibleMatch[0];
+                    try {
+                        jsonStr = jsonStr.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+                        const parsed = JSON.parse(jsonStr);
+                        if (parsed && parsed.type === "#DISPONIBLE#") {
+                            disponibleData = parsed;
+                        }
+                    } catch (e) {
+                        console.error("[Bot] Error al analizar JSON de disponibilidad:", e.message, "JSON:", jsonStr);
+                    }
+                }
+                
+                responseText = assistantResponse;
+            } else {
+                responseText = typeof assistantResponse === "object" ? 
+                    JSON.stringify(assistantResponse) : String(assistantResponse);
+            }
+        }
+        
+        // 3. Log detallado para depuración
+        if (reservaData) console.log("[Bot] JSON #RESERVA# detectado:", JSON.stringify(reservaData, null, 2));
+        if (disponibleData) console.log("[Bot] JSON #DISPONIBLE# detectado:", JSON.stringify(disponibleData, null, 2)); 
+
+        // 4. Validar formato de los JSON
+        if ((reservaData && !reservaData.type) || 
+            (disponibleData && !disponibleData.type) ||
+            (reservaData && reservaData.type !== "#RESERVA#") ||
+            (disponibleData && disponibleData.type !== "#DISPONIBLE#")) {
+            console.log("[Bot] JSON ignorado por falta de type correcto:", 
+                JSON.stringify(reservaData || disponibleData, null, 2));
+        }
+
+        // 5. Procesar bloque #DISPONIBLE# - Consultar disponibilidad real
+        if (disponibleData && disponibleData.type === "#DISPONIBLE#" && disponibleData.date && disponibleData.partySize) {
+            console.log("[Bot] Consultando disponibilidad para:", disponibleData.date, disponibleData.partySize);
+            
+            try {
+                const availabilityResult = await checkAvailability(
+                    disponibleData.date, 
+                    disponibleData.partySize, 
+                    process.env.RESERVI_API_KEY
+                );
+                
+                console.log("[Bot] Respuesta de disponibilidad:", JSON.stringify(availabilityResult, null, 2));
+                
+                if (availabilityResult && availabilityResult.available === true) {
+                    await flowDynamic([{ 
+                        body: `¡Hay disponibilidad para ${disponibleData.partySize} personas el ${disponibleData.date}! Por favor, indícame tu nombre, apellido, email y teléfono para continuar con la reserva.` 
+                    }]);
+                    
+                    // Guardar en el estado para el siguiente paso
+                    state.reservaData = {
+                        date: disponibleData.date,
+                        partySize: disponibleData.partySize
+                    };
+                    
+                    return state;
+                } else {
+                    // Extraer horarios alternativos
+                    let slots = [];
+                    if (availabilityResult && Array.isArray(availabilityResult.slots)) {
+                        slots = availabilityResult.slots;
+                    } else if (availabilityResult && availabilityResult.response && Array.isArray(availabilityResult.response.slots)) {
+                        slots = availabilityResult.response.slots;
+                    } else {
+                        console.error("[Bot] Estructura de respuesta de disponibilidad inesperada:", 
+                            JSON.stringify(availabilityResult, null, 2));
+                    }
+                    
+                    let horariosDisponibles = [];
+                    let areasPorHorario = {};
+                    
+                    slots.forEach(slot => {
+                        if (slot.available === true && slot.time) {
+                            horariosDisponibles.push(slot.time);
+                            if (Array.isArray(slot.areas) && slot.areas.length > 0) {
+                                areasPorHorario[slot.time] = slot.areas.map(area => area.label || area.name);
+                            }
+                        }
+                    });
+                    
+                    console.log("[Bot] Horarios disponibles:", horariosDisponibles);
+                    console.log("[Bot] Áreas por horario:", areasPorHorario);
+                    
+                    if (horariosDisponibles.length > 0) {
+                        let mensaje = `No hay disponibilidad para la fecha y hora solicitada.\nEstos son los horarios disponibles para ${disponibleData.date.split(' ')[0]}:`;
+                        
+                        horariosDisponibles.forEach(horario => {
+                            mensaje += `\n- ${horario}`;
+                            if (areasPorHorario[horario]) {
+                                mensaje += ` (Áreas: ${areasPorHorario[horario].join(", ")})`;
+                            }
+                        });
+                        
+                        mensaje += `\nPor favor, responde con uno de estos horarios y, si lo deseas, un área.`;
+                        
+                        await flowDynamic([{ body: mensaje }]);
+                        
+                        state.horariosDisponibles = horariosDisponibles;
+                        state.areasPorHorario = areasPorHorario;
+                        state.reservaData = {
+                            partySize: disponibleData.partySize
+                        };
+                        
+                        return state;
+                    } else {
+                        await flowDynamic([{ 
+                            body: "No hay disponibilidad para la fecha y hora solicitada. Por favor, elige otro horario." 
+                        }]);
+                        
+                        return state;
+                    }
+                }
+            } catch (err) {
+                console.error("[Bot] Error al consultar disponibilidad:", err);
+                const errorDetails = err.response ? 
+                    JSON.stringify(err.response.data || {}, null, 2) : 
+                    (err.message || String(err));
+                console.error("[Bot] Detalles del error de disponibilidad:", errorDetails);
+                
+                await flowDynamic([{ body: "❌ Error al consultar disponibilidad. Intenta nuevamente." }]);
+                return state;
+            }
+        }
+
+        // 6. Procesar bloque #RESERVA# - Crear reserva
+        if (reservaData && reservaData.type === "#RESERVA#") {
+            const requiredFields = ["reserveName", "partySize", "date", "reservePhone"];
+            const missing = requiredFields.filter(f => !reservaData[f]);
+            
+            if (missing.length > 0) {
+                await flowDynamic([{ body: `Faltan los siguientes datos para la reserva: ${missing.join(", ")}` }]);
+                return state;
+            }
+            
+            const { type, ...reservaPayload } = reservaData;
+            
+            // 6.1 Si hay horarios sugeridos y el usuario responde con uno válido, actualizar la fecha
+            if (state.horariosDisponibles && Array.isArray(state.horariosDisponibles) && state.horariosDisponibles.length > 0) {
+                // Normalizar para comparar (por si hay espacios, etc)
+                const userSlot = (ctx.body || "").trim();
+                const slotMatch = state.horariosDisponibles.find(h => h.trim() === userSlot);
+                
+                if (slotMatch) {
+                    console.log("[Bot] Usuario seleccionó horario alternativo:", slotMatch);
+                    reservaPayload.date = slotMatch;
+                }
+            }
+            
+            // 6.2 Si el usuario eligió un horario alternativo, usarlo, sino verificar disponibilidad
+            if (state.horariosDisponibles && Array.isArray(state.horariosDisponibles) && state.horariosDisponibles.includes(reservaPayload.date)) {
+                // reservaPayload.date ya está correcto
+            } else if (state.horariosDisponibles && Array.isArray(state.horariosDisponibles) && state.horariosDisponibles.length > 0) {
+                // Si el usuario no eligió un horario válido, pedir que elija uno de los disponibles
+                await flowDynamic([{ 
+                    body: `Por favor, selecciona uno de los horarios disponibles: ${state.horariosDisponibles.join(", ")}` 
+                }]);
+                
+                console.log("[Bot] Usuario no eligió un horario válido, pidiéndole que seleccione entre:", 
+                    state.horariosDisponibles);
+                
+                return state;
+            }
+            
+            // 6.3 Consultar disponibilidad solo si no viene de una selección válida
+            if (!state.reservaConfirmada) {
+                console.log("[Bot] Verificando disponibilidad antes de crear reserva:", reservaPayload);
+                
+                try {
+                    const availabilityResult = await checkAvailability(
+                        reservaPayload.date, 
+                        reservaPayload.partySize, 
+                        process.env.RESERVI_API_KEY
+                    );
+                    
+                    console.log("[Bot] Respuesta de disponibilidad pre-reserva:", 
+                        JSON.stringify(availabilityResult, null, 2));
+                    
+                    if (!availabilityResult || availabilityResult.available !== true) {
+                        // Extraer slots desde la estructura correcta
+                        let slots = [];
+                        if (availabilityResult && Array.isArray(availabilityResult.slots)) {
+                            slots = availabilityResult.slots;
+                        } else if (availabilityResult && availabilityResult.response && Array.isArray(availabilityResult.response.slots)) {
+                            slots = availabilityResult.response.slots;
+                        } else {
+                            console.error("[Bot] Estructura de respuesta de disponibilidad inesperada:", 
+                                JSON.stringify(availabilityResult, null, 2));
+                        }
+                        
+                        let horariosDisponibles = [];
+                        let areasPorHorario = {};
+                        
+                        slots.forEach(slot => {
+                            if (slot.available === true && slot.time) {
+                                horariosDisponibles.push(slot.time);
+                                if (Array.isArray(slot.areas) && slot.areas.length > 0) {
+                                    areasPorHorario[slot.time] = slot.areas.map(area => area.label || area.name);
+                                }
+                            }
+                        });
+                        
+                        if (horariosDisponibles.length > 0) {
+                            let mensaje = `No hay disponibilidad para la fecha y hora solicitada.\nEstos son los horarios disponibles para ${reservaPayload.date.split(' ')[0]}:`;
+                            
+                            horariosDisponibles.forEach(horario => {
+                                mensaje += `\n- ${horario}`;
+                                if (areasPorHorario[horario]) {
+                                    mensaje += ` (Áreas: ${areasPorHorario[horario].join(", ")})`;
+                                }
+                            });
+                            
+                            mensaje += `\nPor favor, elige uno de estos horarios y, si lo deseas, un área.`;
+                            await flowDynamic([{ body: mensaje }]);
+                            
+                            state.fechaHoraActual = new Date().toISOString();
+                            state.horariosDisponibles = horariosDisponibles;
+                            state.areasPorHorario = areasPorHorario;
+                            
+                            return state;
+                        }
+                        
+                        await flowDynamic([{ 
+                            body: "No hay disponibilidad para la fecha y hora solicitada. Por favor, elige otro horario." 
+                        }]);
+                        
+                        state.fechaHoraActual = new Date().toISOString();
+                        return state;
+                    }
+                    
+                    // 6.4 Marcar que la reserva ya fue confirmada para no volver a consultar disponibilidad
+                    state.reservaConfirmada = true;
+                } catch (err) {
+                    console.error("[Bot] Error al consultar disponibilidad pre-reserva:", err);
+                    const errorDetails = err.response ? 
+                        JSON.stringify(err.response.data || {}, null, 2) : 
+                        (err.message || String(err));
+                    console.error("[Bot] Detalles del error de disponibilidad pre-reserva:", errorDetails);
+                    
+                    await flowDynamic([{ body: "❌ Error al consultar disponibilidad. Intenta nuevamente." }]);
+                    return state;
+                }
+            }
+            
+            // 6.5 Generar la reserva
+            console.log("[Bot] Creando reserva con payload:", JSON.stringify(reservaPayload, null, 2));
+            
+            try {
+                const apiResult = await createReservation(reservaPayload, process.env.RESERVI_API_KEY);
+                console.log("[Bot] Respuesta de createReservation:", JSON.stringify(apiResult, null, 2));
+                
+                if (apiResult && (apiResult.result === "ok" || apiResult.status === "ok")) {
+                    const reservaId = apiResult.reservaId || apiResult.id || 
+                        (apiResult.response && (apiResult.response.reservaId || apiResult.response.id));
+                    
+                    let confirmMsg = `Reserva confirmada para ${reservaPayload.reserveName} el ${reservaPayload.date} para ${reservaPayload.partySize} personas.`;
+                    
+                    if (reservaId) {
+                        confirmMsg += `\nID de reserva: ${reservaId}`;
+                    }
+                    
+                    console.log("[Bot] Reserva confirmada:", confirmMsg);
+                    await flowDynamic([{ body: confirmMsg }]);
+                    
+                    return state;
+                } else {
+                    console.error("[Bot] Error en la respuesta de la API:", apiResult);
+                    await flowDynamic([{ 
+                        body: "Hubo un problema al procesar tu reserva. Por favor, intenta nuevamente." 
+                    }]);
+                    
+                    return state;
+                }
+            } catch (err) {
+                console.error("[Bot] Error en createReservation:", err);
+                const errorDetails = err.response ? 
+                    JSON.stringify(err.response.data || {}, null, 2) : 
+                    (err.message || String(err));
+                console.error("[Bot] Detalles del error de createReservation:", errorDetails);
+                
+                await flowDynamic([{ 
+                    body: "❌ No se pudo procesar la reserva. Intenta nuevamente o revisa los datos." 
+                }]);
+                
+                return state;
+            }
+        }
+
+        // 7. Filtrar cualquier bloque JSON para no mostrarlo al usuario
+        if (responseText) {
+            // Eliminar bloques JSON en formato markdown
+            responseText = responseText.replace(/```json[\s\S]*?```/ig, "");
+            // Eliminar bloques JSON sin formato
+            responseText = responseText.replace(/\{[\s\S]*?"type"\s*:\s*"#[A-Z]+"[\s\S]*?\}/g, "");
+            // Eliminar líneas vacías consecutivas
+            responseText = responseText.replace(/\n{3,}/g, "\n\n");
+            
+            console.log("[Bot] Respuesta filtrada:", responseText);
+            
+            // Solo mostrar la respuesta si hay texto después de filtrar
+            if (responseText.trim().length > 0) {
+                // Dividir en chunks para mejor experiencia
+                const chunks = responseText.split(/\n\n+/);
+                for (const chunk of chunks) {
+                    if (chunk.trim().length > 0) {
+                        await flowDynamic([{ body: chunk.trim() }]);
+                    }
+                }
+            }
+        }
+        
+        return state;
+    } catch (error) {
+        console.error("[Bot] Error en processUserMessage:", error);
+        errorReporter.reportError(error, ctx.from, ctx.body);
+        
+        await flowDynamic([{ body: "Lo siento, ocurrió un error. Por favor, intenta nuevamente." }]);
+        return state;
+    }
+};
+
+const handleQueue = async (userId) => {
+    const queue = userQueues.get(userId);
+
+    if (userLocks.get(userId)) return;
+
+    userLocks.set(userId, true);
+
+    while (queue.length > 0) {
+        const { ctx, flowDynamic, state, provider, gotoFlow } = queue.shift();
+        try {
+            await processUserMessage(ctx, { flowDynamic, state, provider, gotoFlow });
+        } catch (error) {
+            console.error(`Error procesando el mensaje de ${userId}:`, error);
+        }
+    }
+
+    userLocks.set(userId, false);
+    userQueues.delete(userId);
+};
+
+// Main function to initialize the bot
+const main = async () => {
+    console.log("📌 Inicializando el bot de reservas...");
+
+    // Crear el flujo principal del bot
+    const adapterFlow = createFlow([welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg, idleFlow]);
+    
+    // Crear el proveedor de WhatsApp (Baileys)
+    const adapterProvider = createProvider(BaileysProvider, {
+        groupsIgnore: false,
+        readStatus: false,
+    });
+    
+    // Crear la base de datos en memoria
+    const adapterDB = new MemoryDB();
+    
+    // Inicializar el bot con los flujos, proveedor y base de datos
+    const { httpServer } = await createBot({
+        flow: adapterFlow,
+        provider: adapterProvider,
+        database: adapterDB,
+    });
+
+    // Inyectar el servidor HTTP para el proveedor
+    httpInject(adapterProvider.server);
+    
+    // Iniciar el servidor HTTP en el puerto especificado
+    httpServer(+PORT);
+    
+    console.log(`✅ Bot iniciado en el puerto ${PORT}`);
+};
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+export { welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg, handleQueue, userQueues, userLocks };
+
+main();

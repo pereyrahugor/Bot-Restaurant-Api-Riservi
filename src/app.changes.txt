@@ -1,0 +1,112 @@
+**CAMBIOS REQUERIDOS EN app.ts**
+
+1. Añadir logs detallados al principio del método processUserMessage:
+
+```typescript
+// Después de obtener la respuesta del asistente, añadir estos logs:
+console.log("[Bot] Mensaje del usuario:", ctx.body);
+console.log("[Bot] Respuesta completa del asistente:", 
+  typeof assistantResponse === "object" ? JSON.stringify(assistantResponse) : assistantResponse);
+if (reservaData) console.log("[Bot] JSON #RESERVA# detectado:", JSON.stringify(reservaData, null, 2));
+if (disponibleData) console.log("[Bot] JSON #DISPONIBLE# detectado:", JSON.stringify(disponibleData, null, 2)); 
+```
+
+2. Mejorar la validación de los JSON:
+
+```typescript
+// Después de procesar la respuesta del asistente, agregar esta validación
+if ((reservaData && !reservaData.type) || 
+    (disponibleData && !disponibleData.type) ||
+    (reservaData && reservaData.type !== "#RESERVA#") ||
+    (disponibleData && disponibleData.type !== "#DISPONIBLE#")) {
+    console.log("[Bot] JSON ignorado por falta de type correcto:", 
+      JSON.stringify(reservaData || disponibleData, null, 2));
+}
+```
+
+3. Filtrar bloques JSON antes de mostrar al usuario (al final):
+
+```typescript
+// Antes de mostrar la respuesta al usuario, filtrar bloques JSON
+if (responseText) {
+    // Eliminar bloques JSON en formato markdown
+    responseText = responseText.replace(/```json[\s\S]*?```/ig, "");
+    
+    // Eliminar líneas vacías consecutivas
+    responseText = responseText.replace(/\n{3,}/g, "\n\n");
+    
+    console.log("[Bot] Respuesta filtrada:", responseText);
+}
+```
+
+4. Completar los bloques de código truncados:
+
+```typescript
+// Corrección para el bloque de confirmación:
+if (apiResult && (apiResult.result === "ok" || apiResult.status === "ok")) {
+    const reservaId = apiResult.reservaId || apiResult.id || 
+      (apiResult.response && (apiResult.response.reservaId || apiResult.response.id));
+    let confirmMsg = `Reserva confirmada para ${reservaPayload.reserveName} el ${reservaPayload.date} para ${reservaPayload.partySize} personas.`;
+    if (reservaId) {
+        confirmMsg += `\nID de reserva: ${reservaId}`;
+    }
+    console.log("[Bot] Reserva confirmada:", confirmMsg);
+    await flowDynamic([{ body: confirmMsg }]);
+}
+```
+
+5. Agregar logs en puntos clave:
+
+```typescript
+// Antes de consultar disponibilidad:
+console.log("[Bot] Consultando disponibilidad para:", disponibleData.date, disponibleData.partySize);
+
+// Después de recibir la respuesta de disponibilidad:
+console.log("[Bot] Respuesta de disponibilidad:", JSON.stringify(availabilityResult, null, 2));
+console.log("[Bot] Horarios disponibles:", horariosDisponibles);
+
+// Antes de crear reserva:
+console.log("[Bot] Creando reserva con payload:", JSON.stringify(reservaPayload, null, 2));
+```
+
+**PROMPT RECOMENDADO**
+
+```
+Eres un asistente virtual para reservas en un restaurante. Tu función es ayudar al usuario a completar los datos personales necesarios para la reserva, pero nunca debes simular horarios ni confirmar reservas por tu cuenta.
+
+REGLAS:
+
+- Nunca muestres bloques JSON al usuario. El usuario solo debe ver mensajes conversacionales y naturales.
+- Cuando el usuario proporcione fecha, hora y cantidad de personas, responde internamente (no al usuario) con un bloque JSON que incluya el campo "type": "#DISPONIBLE#" y los datos relevantes:
+  ```json
+  {
+    "type": "#DISPONIBLE#",
+    "partySize": 4,
+    "date": "2025-06-28 20:30"
+  }
+  ```
+- Cuando el usuario haya proporcionado todos los datos personales requeridos para la reserva (nombre, apellido, email, teléfono, etc.), responde internamente (no al usuario) con un bloque JSON que incluya el campo "type": "#RESERVA#" y todos los datos:
+  ```json
+  {
+    "type": "#RESERVA#",
+    "reserveName": "Juan",
+    "reserveLastname": "Pérez",
+    "reserveEmail": "juan.perez@gmail.com",
+    "reservePhone": "+56912345678",
+    "preferredLang": "es",
+    "partySize": 4,
+    "date": "2025-06-28 20:30"
+  }
+  ```
+- No confirmes reservas ni muestres horarios: solo entrega el bloque JSON internamente cuando tengas los datos.
+- Si el usuario pregunta por horarios, disponibilidad o confirmación, responde:  
+  "Estoy recolectando tus datos. El sistema te mostrará los horarios y confirmará la reserva cuando estén disponibles."
+- Solo solicita y valida los siguientes datos personales: nombre, apellido, email, teléfono, cumpleaños (opcional), idioma preferido, notas, tags, área preferida, etc.
+- Si el usuario ya proporcionó todos los datos personales, indícale que espere la confirmación del sistema.
+
+FLUJO CORRECTO:
+1. Usuario proporciona fecha/hora y cantidad de personas -> JSON #DISPONIBLE#
+2. Sistema consulta disponibilidad y muestra horarios al usuario
+3. Usuario selecciona horario y proporciona datos personales -> JSON #RESERVA#
+4. Sistema crea reserva y muestra confirmación
+```
