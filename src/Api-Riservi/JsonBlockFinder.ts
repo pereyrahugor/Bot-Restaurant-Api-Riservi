@@ -11,7 +11,7 @@ export class JsonBlockFinder {
         ];
         for (const { tag, type } of etiquetas) {
             // Corregido: buscar etiquetas literales [JSON-RESERVA], etc.
-            const regex = new RegExp(`\\[${tag}\\]([\\s\\S]*?)\\[\/${tag}\\]`, 'g');
+                const regex = new RegExp(`\\[${tag}\\]([\\s\\S]*?)\\[/${tag}\\]`, 'g');
             let match;
             while ((match = regex.exec(texto)) !== null) {
                 try {
