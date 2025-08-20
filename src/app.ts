@@ -189,11 +189,13 @@ async function analizarYProcesarRespuestaAsistente(response, ctx, flowDynamic, s
                 await flowDynamic([{ body: mensaje }]);
                 return;
             }
+            console.log('[DEBUG][API] Llamando a checkAvailability con:', jsonData);
             const apiResponse = await checkAvailability(
                 jsonData.date,
                 jsonData.partySize,
                 process.env.RESERVI_API_KEY
             );
+            console.log('[DEBUG][API] Respuesta de checkAvailability:', apiResponse);
             let horariosDisponibles = [];
             if (apiResponse?.response?.availability) {
                 horariosDisponibles = apiResponse.response.availability
@@ -208,6 +210,7 @@ async function analizarYProcesarRespuestaAsistente(response, ctx, flowDynamic, s
             }
             if (jsonData.date && jsonData.partySize) {
                 const pedirDatos = `Por favor, completa los datos restantes para la reserva del ${jsonData.date} para ${jsonData.partySize} personas (nombre, teléfono, email, etc).`;
+                console.log('[DEBUG][API] Enviando pedirDatos al asistente:', pedirDatos);
                 const assistantApiResponse = await getAssistantResponse(
                     ASSISTANT_ID,
                     pedirDatos,
@@ -216,12 +219,14 @@ async function analizarYProcesarRespuestaAsistente(response, ctx, flowDynamic, s
                     ctx.from,
                     ctx.from
                 );
+                console.log('[DEBUG][API] Respuesta del asistente a pedirDatos:', assistantApiResponse);
                 if (assistantApiResponse) {
                     const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
                     await flowDynamic([{ body: cleanText.trim() }]);
                 }
                 return;
             }
+            console.log('[DEBUG][API] Enviando resumen al asistente:', resumen);
             const assistantApiResponse = await getAssistantResponse(
                 ASSISTANT_ID,
                 resumen,
@@ -230,6 +235,7 @@ async function analizarYProcesarRespuestaAsistente(response, ctx, flowDynamic, s
                 ctx.from,
                 ctx.from
             );
+            console.log('[DEBUG][API] Respuesta del asistente a resumen:', assistantApiResponse);
             if (assistantApiResponse) {
                 const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
                 await flowDynamic([{ body: cleanText.trim() }]);
