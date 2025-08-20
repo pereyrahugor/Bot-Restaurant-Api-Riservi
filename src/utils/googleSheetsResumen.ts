@@ -13,11 +13,11 @@ export interface ResumenData {
 }
 
 // Cargar credenciales desde un archivo JSON
-const credentialsPath = path.resolve("./././credentials/bot-test-v1-450813-c85b778a9c36.json"); // Cambia la ruta real
-const credentials = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
+//const credentialsPath = path.resolve("./././credentials/bot-test-v1-450813-c85b778a9c36.json"); // Cambia la ruta real
+//const credentials = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
 
 const auth = new google.auth.GoogleAuth({
-    credentials,
+//    credentials,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
