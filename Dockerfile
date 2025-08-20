@@ -11,8 +11,11 @@ ENV PNPM_HOME=/usr/local/bin
 
 
 
-# Copiar solo package.json, lock y archivos de configuración necesarios para build (mejor cache)
-COPY package*.json *-lock.yaml rollup.config.js ./
+# Copiar archivos de configuración y dependencias primero para aprovechar la cache
+COPY package*.json ./
+COPY *-lock.yaml ./
+COPY rollup.config.js ./
+COPY tsconfig.json ./
 
 # Instalar dependencias del sistema necesarias para build
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ git ca-certificates poppler-utils && update-ca-certificates
@@ -20,8 +23,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 # Instalar dependencias node
 RUN pnpm install
 
-# Copiar el resto del código fuente antes del build
-COPY . .
+# Copiar el resto del código fuente y carpetas necesarias antes del build
+COPY src/ ./src/
+COPY assets/ ./assets/
+COPY utils/ ./utils/
+COPY utils-web/ ./utils-web/
+COPY temp/ ./temp/
+COPY tmp/ ./tmp/
+COPY README.md ./
+COPY nodemon.json ./
+COPY railway.json ./
 
 # Compilar y mostrar el error real en el log de Docker, imprimiendo logs si falla
 RUN pnpm run build || (echo '--- npm-debug.log ---' && cat /app/npm-debug.log || true && echo '--- pnpm-debug.log ---' && cat /app/pnpm-debug.log || true && exit 1)
@@ -50,10 +61,15 @@ EXPOSE $PORT
 RUN mkdir -p /app/credentials
 
 
+# Copiar los artefactos necesarios desde builder
 COPY --from=builder /app/assets ./assets
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/*.json /app/*-lock.yaml ./
+COPY --from=builder /app/*.json ./
+COPY --from=builder /app/*-lock.yaml ./
 COPY --from=builder /app/src/webchat.html ./src/webchat.html
+COPY --from=builder /app/README.md ./
+COPY --from=builder /app/nodemon.json ./
+COPY --from=builder /app/railway.json ./
 
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
