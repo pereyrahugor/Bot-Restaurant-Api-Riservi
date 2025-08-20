@@ -26,8 +26,8 @@ RUN pnpm install
 # Copiar el resto del código fuente y carpetas necesarias antes del build
 COPY src/ ./src/
 COPY assets/ ./assets/
-COPY utils/ ./utils/
-COPY utils-web/ ./utils-web/
+    COPY src/utils/ ./src/utils/
+    COPY src/utils-web/ ./src/utils-web/
 COPY temp/ ./temp/
 COPY tmp/ ./tmp/
 COPY README.md ./
