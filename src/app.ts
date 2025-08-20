@@ -332,8 +332,32 @@ const main = async () => {
                                                     const threadId = await getOrCreateThreadId(session);
                                                     const reply = await sendMessageToThread(threadId, message, ASSISTANT_ID);
                                                     session.addAssistantMessage(reply);
-                                                    replyText = reply;
-                                            }
+                                                    // Procesar la respuesta con analizarYProcesarRespuestaAsistente antes de enviarla
+                                                    let processedReply = "";
+                                                    let apiCalled = false;
+                                                    const flowDynamic = async (arr) => {
+                                                        if (Array.isArray(arr)) {
+                                                            processedReply += arr.map(a => a.body).join('\n\n');
+                                                        } else if (typeof arr === 'string') {
+                                                            processedReply += arr + '\n\n';
+                                                        }
+                                                    };
+                                                    await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                                                        reply,
+                                                        ctx,
+                                                        flowDynamic,
+                                                        session,
+                                                        undefined,
+                                                        () => {},
+                                                        async (...args) => {
+                                                            apiCalled = true;
+                                                            return await sendMessageToThread(threadId, args[1], ASSISTANT_ID);
+                                                        },
+                                                        ASSISTANT_ID
+                                                    );
+                                                    replyText = processedReply;
+                                                    // Si se llamó a la API, processedReply ya contiene la respuesta procesada
+                                                }
                                             res.setHeader('Content-Type', 'application/json');
                                             res.end(JSON.stringify({ reply: replyText }));
                                         } catch (err) {
