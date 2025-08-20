@@ -20,6 +20,7 @@ import { WebChatSession } from './utils-web/WebChatSession';
 import { fileURLToPath } from 'url';
 import { JsonBlockFinder } from "./Api-Riservi/JsonBlockFinder";
 import { checkAvailability, createReservation, updateReservationById, cancelReservationById } from './Api-Riservi/riservi';
+import { AssistantResponseProcessor } from "./utils/AssistantResponseProcessor";
 
 // Definir __dirname para ES modules
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,8 +35,8 @@ const PORT = process.env.PORT ?? "";
 const ASSISTANT_ID = process.env.ASSISTANT_ID;
 const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_WS ?? "";
 
-const userQueues = new Map();
-const userLocks = new Map();
+export const userQueues = new Map();
+export const userLocks = new Map();
 
 const adapterProvider = createProvider(BaileysProvider, {
     groupsIgnore: false,
@@ -127,7 +128,16 @@ export const processUserMessage = async (
                 `https://wa.me/${ctx.from}`
             );
         }
-        await analizarYProcesarRespuestaAsistente(response, ctx, flowDynamic, state, provider, gotoFlow);
+        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+            response,
+            ctx,
+            flowDynamic,
+            state,
+            provider,
+            gotoFlow,
+            getAssistantResponse,
+            ASSISTANT_ID
+        );
         return state;
     } catch (error) {
         console.error("Error al procesar el mensaje del usuario:", error);
@@ -144,186 +154,7 @@ export const processUserMessage = async (
     }
 };
 
-// --- LÓGICA REUTILIZABLE PARA ANÁLISIS Y PROCESAMIENTO DE RESPUESTAS DEL ASISTENTE ---
-async function analizarYProcesarRespuestaAsistente(response, ctx, flowDynamic, state, provider, gotoFlow) {
-    // --- INICIO FLUJO RISERVI Y LIMPIEZA ANTES DE CHUNKS ---
-    // Buscar y procesar bloques JSON antes de cualquier envío al usuario
-    let jsonData = null;
-    const textResponse = typeof response === "string" ? response : String(response);
-    const jsonDisponibleMatch = textResponse.match(/\[JSON-DISPONIBLE\]([\s\S]*?)\[\/JSON-DISPONIBLE\]/);
-    const jsonReservaMatch = textResponse.match(/\[JSON-RESERVA\]([\s\S]*?)\[\/JSON-RESERVA\]/);
-    const jsonModificarMatch = textResponse.match(/\[JSON-MODIFICAR\]([\s\S]*?)\[\/JSON-MODIFICAR\]/);
-    const jsonCancelarMatch = textResponse.match(/\[JSON-CANCELAR\]([\s\S]*?)\[\/JSON-CANCELAR\]/);
-    if (jsonDisponibleMatch) {
-        try {
-            jsonData = JSON.parse(jsonDisponibleMatch[1]);
-        } catch (e) { jsonData = null; }
-    } else if (jsonReservaMatch) {
-        try {
-            jsonData = JSON.parse(jsonReservaMatch[1]);
-        } catch (e) { jsonData = null; }
-    } else if (jsonModificarMatch) {
-        try {
-            jsonData = JSON.parse(jsonModificarMatch[1]);
-        } catch (e) { jsonData = null; }
-    } else if (jsonCancelarMatch) {
-        try {
-            jsonData = JSON.parse(jsonCancelarMatch[1]);
-        } catch (e) { jsonData = null; }
-    }
-    if (!jsonData) {
-        jsonData = JsonBlockFinder.buscarBloquesJSONEnTexto(textResponse);
-        if (!jsonData && typeof response === 'object') {
-            jsonData = JsonBlockFinder.buscarBloquesJSONProfundo(response);
-        }
-    }
-    if (jsonData) {
-        if (jsonData.type === "#DISPONIBLE#") {
-            const fechaOriginal = jsonData.date;
-            const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
-            if (fechaOriginal !== fechaCorregida) {
-                jsonData.date = fechaCorregida;
-            }
-            if (!esFechaFutura(jsonData.date)) {
-                const mensaje = 'La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida.';
-                await flowDynamic([{ body: mensaje }]);
-                return;
-            }
-            console.log('[DEBUG][API] Llamando a checkAvailability con:', jsonData);
-            const apiResponse = await checkAvailability(
-                jsonData.date,
-                jsonData.partySize,
-                process.env.RESERVI_API_KEY
-            );
-            console.log('[DEBUG][API] Respuesta de checkAvailability:', apiResponse);
-            let horariosDisponibles = [];
-            if (apiResponse?.response?.availability) {
-                horariosDisponibles = apiResponse.response.availability
-                    .filter(slot => slot.available)
-                    .map(slot => slot.time);
-            }
-            let resumen;
-            if (horariosDisponibles.length > 0) {
-                resumen = `Horarios disponibles para tu reserva: ${horariosDisponibles.join(', ')}`;
-            } else {
-                resumen = "No hay horarios disponibles para la fecha y cantidad de personas solicitadas.";
-            }
-            if (jsonData.date && jsonData.partySize) {
-                const pedirDatos = `Por favor, completa los datos restantes para la reserva del ${jsonData.date} para ${jsonData.partySize} personas (nombre, teléfono, email, etc).`;
-                console.log('[DEBUG][API] Enviando pedirDatos al asistente:', pedirDatos);
-                const assistantApiResponse = await getAssistantResponse(
-                    ASSISTANT_ID,
-                    pedirDatos,
-                    state,
-                    undefined,
-                    ctx.from,
-                    ctx.from
-                );
-                console.log('[DEBUG][API] Respuesta del asistente a pedirDatos:', assistantApiResponse);
-                if (assistantApiResponse) {
-                    const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                    await flowDynamic([{ body: cleanText.trim() }]);
-                }
-                return;
-            }
-            console.log('[DEBUG][API] Enviando resumen al asistente:', resumen);
-            const assistantApiResponse = await getAssistantResponse(
-                ASSISTANT_ID,
-                resumen,
-                state,
-                "Por favor, responde aunque sea brevemente.",
-                ctx.from,
-                ctx.from
-            );
-            console.log('[DEBUG][API] Respuesta del asistente a resumen:', assistantApiResponse);
-            if (assistantApiResponse) {
-                const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                await flowDynamic([{ body: cleanText.trim() }]);
-            }
-            return;
-        } else if (jsonData.type === "#RESERVA#") {
-            const fechaOriginal = jsonData.date;
-            const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
-            if (fechaOriginal !== fechaCorregida) {
-                jsonData.date = fechaCorregida;
-            }
-            if (!esFechaFutura(jsonData.date)) {
-                const mensaje = 'La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida.';
-                await flowDynamic([{ body: mensaje }]);
-                return;
-            }
-            const apiResponse = await createReservation(
-                jsonData,
-                process.env.RESERVI_API_KEY
-            );
-            const assistantApiResponse = await getAssistantResponse(
-                ASSISTANT_ID,
-                typeof apiResponse === 'string' ? apiResponse : JSON.stringify(apiResponse),
-                state,
-                undefined,
-                ctx.from,
-                ctx.from
-            );
-            if (assistantApiResponse) {
-                const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                await flowDynamic([{ body: cleanText.trim() }]);
-            }
-            return;
-        } else if (jsonData.type === "#MODIFICAR#") {
-            const apiResponse = await updateReservationById(
-                jsonData.id,
-                jsonData.date,
-                jsonData.partySize,
-                process.env.RESERVI_API_KEY
-            );
-            const assistantApiResponse = await getAssistantResponse(
-                ASSISTANT_ID,
-                typeof apiResponse === 'string' ? apiResponse : JSON.stringify(apiResponse),
-                state,
-                undefined,
-                ctx.from,
-                ctx.from
-            );
-            if (assistantApiResponse) {
-                const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                await flowDynamic([{ body: cleanText.trim() }]);
-            }
-            return;
-        } else if (jsonData.type === "#CANCELAR#") {
-            const apiResponse = await cancelReservationById(
-                jsonData.id,
-                process.env.RESERVI_API_KEY
-            );
-            const assistantApiResponse = await getAssistantResponse(
-                ASSISTANT_ID,
-                typeof apiResponse === 'string' ? apiResponse : JSON.stringify(apiResponse),
-                state,
-                undefined,
-                ctx.from,
-                ctx.from
-            );
-            if (assistantApiResponse) {
-                const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                await flowDynamic([{ body: cleanText.trim() }]);
-            }
-            return;
-        }
-    }
-    // --- FIN FLUJO RISERVI Y LIMPIEZA ANTES DE CHUNKS ---
-    // --- LIMPIEZA DE BLOQUES JSON EN TODA RESPUESTA ---
-    const cleanTextResponse = limpiarBloquesJSON(textResponse);
-    if (cleanTextResponse.trim().length > 0) {
-        const chunks = cleanTextResponse.split(/\n\n+/);
-        for (const chunk of chunks) {
-            if (chunk.trim().length > 0) {
-                await flowDynamic([{ body: chunk.trim() }]);
-            }
-        }
-    }
-}
-
-
-const handleQueue = async (userId) => {
+export const handleQueue = async (userId) => {
     const queue = userQueues.get(userId);
 
     if (userLocks.get(userId)) return;
@@ -426,7 +257,16 @@ const main = async () => {
                                 // Obtener respuesta del asistente
                                 const response = await getAssistantResponse(ASSISTANT_ID, msg, state, undefined, ip, ip);
                                 // Procesar y limpiar la respuesta igual que WhatsApp
-                                await analizarYProcesarRespuestaAsistente(response, { from: ip, body: msg, type: 'webchat' }, flowDynamic, state, provider, gotoFlow);
+                                await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                                    response,
+                                    { from: ip, body: msg, type: 'webchat' },
+                                    flowDynamic,
+                                    state,
+                                    provider,
+                                    gotoFlow,
+                                    getAssistantResponse,
+                                    ASSISTANT_ID
+                                );
                             }
                             socket.emit('reply', replyText);
                         } catch (err) {
@@ -589,34 +429,5 @@ const main = async () => {
 process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
-
-// --- FUNCION DE LIMPIEZA DE BLOQUES JSON ---
-function limpiarBloquesJSON(texto) {
-    return texto.replace(/\[JSON-DISPONIBLE\][\s\S]*?\[\/JSON-DISPONIBLE\]/g, '').replace(/\[JSON-RESERVA\][\s\S]*?\[\/JSON-RESERVA\]/g, '');
-}
-
-// --- FUNCION DE VALIDACION Y CORRECCION DE FECHA FUTURA ---
-function corregirFechaAnioVigente(fechaReservaStr) {
-    // Si el año es menor al actual, lo actualiza al año vigente
-    const ahora = new Date();
-    const vigente = ahora.getFullYear();
-    const [fecha, hora] = fechaReservaStr.split(' ');
-    const [anioRaw, mes, dia] = fecha.split('-').map(Number);
-    let anio = anioRaw;
-    if (anio < vigente) {
-        anio = vigente;
-    }
-    return `${anio.toString().padStart(4, '0')}-${mes.toString().padStart(2, '0')}-${dia.toString().padStart(2, '0')} ${hora}`;
-}
-
-function esFechaFutura(fechaReservaStr) {
-    const ahora = new Date();
-    const fechaReserva = new Date(fechaReservaStr.replace(' ', 'T'));
-    return fechaReserva >= ahora;
-}
-
-export { welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg,
-    handleQueue, userQueues, userLocks,
- };
 
 main();

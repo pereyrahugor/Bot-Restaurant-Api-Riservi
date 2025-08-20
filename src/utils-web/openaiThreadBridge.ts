@@ -7,10 +7,21 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
  * @param store objeto de sesión por IP
  * @returns thread_id
  */
-export async function getOrCreateThreadId(store: { thread_id?: string | null }) {
+export async function getOrCreateThreadId(store: { thread_id?: string | null, contacto?: string, fecha?: string }) {
   if (store.thread_id) return store.thread_id;
   const thread = await openai.beta.threads.create();
   store.thread_id = thread.id;
+  // Enviar contexto inicial solo al crear el thread
+  const currentDatetime = new Date().toISOString();
+  let systemPrompt = `Fecha y hora actual de referencia para el asistente: ${currentDatetime}`;
+  if (store.contacto) systemPrompt += `\nNúmero de contacto del usuario: ${store.contacto}`;
+  await openai.beta.threads.messages.create(
+    thread.id,
+    {
+      role: "user",
+      content: [{ type: "text", text: systemPrompt }],
+    }
+  );
   return thread.id;
 }
 
