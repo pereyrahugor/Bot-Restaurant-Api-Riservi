@@ -1,0 +1,11 @@
+
+{
+  "name": "Bot WhatsApp BuilderBot",
+  "description": "Bot de WhatsApp con integración OpenAI, API de Reservi",
+  "plugins": ["docker"],
+  "envs": [
+    { "key": "ASSISTANT_ID", "name": "Assistant ID", "required": true },
+    { "key": "OPENAI_API_KEY", "name": "Clave API OpenAI", "required": true },
+    { "key": "RESERVI_API_KEY", "name": "Clave API Reservi", "required": true }
+  ]
+}
