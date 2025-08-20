@@ -118,255 +118,24 @@ export const processUserMessage = async (
 ) => {
     await typing(ctx, provider);
     try {
-
-        // const response = await toAsk(ASSISTANT_ID, ctx.body, state);
         const response = await getAssistantResponse(ASSISTANT_ID, ctx.body, state, undefined, ctx.from, ctx.from);
-
-        // Log para depuración: mostrar el contenido completo de la respuesta del asistente
         console.log('[DEBUG] Respuesta completa del asistente:', JSON.stringify(response, null, 2));
-
         if (!response) {
-            // Enviar reporte de error al grupo de WhatsApp
             await errorReporter.reportError(
                 new Error("No se recibió respuesta del asistente."),
                 ctx.from,
                 `https://wa.me/${ctx.from}`
             );
         }
-
-        // --- INICIO FLUJO RISERVI Y LIMPIEZA ANTES DE CHUNKS ---
-        // Buscar y procesar bloques JSON antes de cualquier envío al usuario
-        let jsonData = null;
-        const responseAny = response as any;
-        const textResponse = typeof response === "string" ? response : String(response);
-        // --- FUNCIONES AUXILIARES PARA DETECCIÓN DE BLOQUES JSON ---
-        const jsonDisponibleMatch = textResponse.match(/\[JSON-DISPONIBLE\]([\s\S]*?)\[\/JSON-DISPONIBLE\]/);
-        const jsonReservaMatch = textResponse.match(/\[JSON-RESERVA\]([\s\S]*?)\[\/JSON-RESERVA\]/);
-        const jsonModificarMatch = textResponse.match(/\[JSON-MODIFICAR\]([\s\S]*?)\[\/JSON-MODIFICAR\]/);
-        const jsonCancelarMatch = textResponse.match(/\[JSON-CANCELAR\]([\s\S]*?)\[\/JSON-CANCELAR\]/);
-        // --- LOG EXTRA PARA DEPURACIÓN DE BLOQUES JSON ---
-        console.log('[DEBUG] textResponse recibido para análisis de etiquetas:', textResponse);
-        if (jsonDisponibleMatch) {
-            console.log('[DEBUG] Match [JSON-DISPONIBLE]:', jsonDisponibleMatch[1]);
-        }
-        if (jsonReservaMatch) {
-            console.log('[DEBUG] Match [JSON-RESERVA]:', jsonReservaMatch[1]);
-        }
-        if (jsonDisponibleMatch) {
-            try {
-                jsonData = JSON.parse(jsonDisponibleMatch[1]);
-                console.log('[RISERVI] JSON detectado entre etiquetas DISPONIBLE:', JSON.stringify(jsonData));
-            } catch (e) {
-                console.error('[RISERVI] Error al parsear JSON-DISPONIBLE:', e, jsonDisponibleMatch[1]);
-                return state;
-            }
-        } else if (jsonReservaMatch) {
-            try {
-                jsonData = JSON.parse(jsonReservaMatch[1]);
-                console.log('[RISERVI] JSON detectado entre etiquetas RESERVA:', JSON.stringify(jsonData));
-            } catch (e) {
-                console.error('[RISERVI] Error al parsear JSON-RESERVA:', e, '\nContenido del bloque:', jsonReservaMatch[1]);
-                return state;
-            }
-        } else if (jsonModificarMatch) {
-            try {
-                jsonData = JSON.parse(jsonModificarMatch[1]);
-                console.log('[RISERVI] JSON detectado entre etiquetas MODIFICAR:', JSON.stringify(jsonData));
-            } catch (e) {
-                console.error('[RISERVI] Error al parsear JSON-MODIFICAR:', e, jsonModificarMatch[1]);
-                return state;
-            }
-        } else if (jsonCancelarMatch) {
-            try {
-                jsonData = JSON.parse(jsonCancelarMatch[1]);
-                console.log('[RISERVI] JSON detectado entre etiquetas CANCELAR:', JSON.stringify(jsonData));
-            } catch (e) {
-                console.error('[RISERVI] Error al parsear JSON-CANCELAR:', e, jsonCancelarMatch[1]);
-                return state;
-            }
-        }
-        // Si no se detectó bloque entre etiquetas, buscar cualquier bloque JSON válido en el texto (robusto para variables Python, bloques sueltos, etc)
-        if (!jsonData) {
-            // Busca en el texto plano
-            jsonData = JsonBlockFinder.buscarBloquesJSONEnTexto(textResponse);
-            // Si no se encontró, busca en todas las propiedades string del objeto de respuesta
-            if (!jsonData && typeof response === 'object') {
-                jsonData = JsonBlockFinder.buscarBloquesJSONProfundo(response);
-                if (jsonData) {
-                    console.log('[RISERVI] JSON detectado en objeto anidado:', JSON.stringify(jsonData));
-                }
-            }
-        }
-        if (jsonData) {
-            if (jsonData.type === "#DISPONIBLE#") {
-                // Corrección automática de año si es menor al vigente
-                const fechaOriginal = jsonData.date;
-                const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
-                if (fechaOriginal !== fechaCorregida) {
-                    jsonData.date = fechaCorregida;
-                    // Eliminado: notificación al usuario sobre corrección de año
-                }
-                if (!esFechaFutura(jsonData.date)) {
-                    const mensaje = 'La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida.';
-                    await flowDynamic([{ body: mensaje }]);
-                    return state;
-                }
-                console.log('[RISERVI] Ejecutando checkAvailability con:', jsonData.date, jsonData.partySize);
-                const apiResponse = await checkAvailability(
-                    jsonData.date,
-                    jsonData.partySize,
-                    process.env.RESERVI_API_KEY
-                );
-                console.log('[RISERVI] Respuesta de checkAvailability:', JSON.stringify(apiResponse));
-
-                // --- NUEVO: Extraer solo horarios disponibles ---
-                let horariosDisponibles = [];
-                if (apiResponse?.response?.availability) {
-                    horariosDisponibles = apiResponse.response.availability
-                        .filter(slot => slot.available)
-                        .map(slot => slot.time);
-                }
-                let resumen;
-                if (horariosDisponibles.length > 0) {
-                    resumen = `Horarios disponibles para tu reserva: ${horariosDisponibles.join(', ')}`;
-                } else {
-                    resumen = "No hay horarios disponibles para la fecha y cantidad de personas solicitadas.";
-                }
-
-                // Si el usuario eligió un horario alternativo, pedir al asistente que complete los datos restantes
-                if (jsonData.date && jsonData.partySize) {
-                    const pedirDatos = `Por favor, completa los datos restantes para la reserva del ${jsonData.date} para ${jsonData.partySize} personas (nombre, teléfono, email, etc).`;
-                    const assistantApiResponse = await getAssistantResponse(
-                        ASSISTANT_ID,
-                        pedirDatos,
-                        state,
-                        undefined,
-                        ctx.from,
-                        ctx.from
-                    );
-                    if (assistantApiResponse) {
-                        const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                        await flowDynamic([{ body: cleanText.trim() }]);
-                    }
-                    return state;
-                }
-
-                // Enviar solo el resumen al asistente (caso general)
-                const assistantApiResponse = await getAssistantResponse(
-                    ASSISTANT_ID,
-                    resumen,
-                    state,
-                    "Por favor, responde aunque sea brevemente.",
-                    ctx.from,
-                    ctx.from
-                );
-                if (assistantApiResponse) {
-                    const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                    await flowDynamic([{ body: cleanText.trim() }]);
-                }
-                return state;
-            } else if (jsonData.type === "#RESERVA#") {
-                // Corrección automática de año si es menor al vigente
-                const fechaOriginal = jsonData.date;
-                const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
-                if (fechaOriginal !== fechaCorregida) {
-                    jsonData.date = fechaCorregida;
-                    // Eliminado: notificación al usuario sobre corrección de año
-                }
-                if (!esFechaFutura(jsonData.date)) {
-                    const mensaje = 'La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida.';
-                    await flowDynamic([{ body: mensaje }]);
-                    return state;
-                }
-                console.log('[RISERVI] Ejecutando createReservation con:', JSON.stringify(jsonData));
-                const apiResponse = await createReservation(
-                    jsonData,
-                    process.env.RESERVI_API_KEY
-                );
-                console.log('[RISERVI] Respuesta de createReservation:', JSON.stringify(apiResponse));
-                const assistantApiResponse = await getAssistantResponse(
-                    ASSISTANT_ID,
-                    typeof apiResponse === 'string' ? apiResponse : JSON.stringify(apiResponse),
-                    state,
-                    undefined,
-                    ctx.from,
-                    ctx.from
-                );
-                if (assistantApiResponse) {
-                    const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                    await flowDynamic([{ body: cleanText.trim() }]);
-                }
-                return state;
-            } else if (jsonData.type === "#MODIFICAR#") {
-                // Implementación del método de modificación de reserva
-                // No se modifica la lógica, solo se llama al método
-                const apiResponse = await updateReservationById(
-                    jsonData.id,
-                    jsonData.date,
-                    jsonData.partySize,
-                    process.env.RESERVI_API_KEY
-                );
-                console.log('[RISERVI] Respuesta de updateReservationById:', JSON.stringify(apiResponse));
-                const assistantApiResponse = await getAssistantResponse(
-                    ASSISTANT_ID,
-                    typeof apiResponse === 'string' ? apiResponse : JSON.stringify(apiResponse),
-                    state,
-                    undefined,
-                    ctx.from,
-                    ctx.from
-                );
-                if (assistantApiResponse) {
-                    const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                    await flowDynamic([{ body: cleanText.trim() }]);
-                }
-                return state;
-            } else if (jsonData.type === "#CANCELAR#") {
-                // Implementación del método de cancelación de reserva
-                // No se modifica la lógica, solo se llama al método
-                const apiResponse = await cancelReservationById(
-                    jsonData.id,
-                    process.env.RESERVI_API_KEY
-                );
-                console.log('[RISERVI] Respuesta de cancelReservationById:', JSON.stringify(apiResponse));
-                const assistantApiResponse = await getAssistantResponse(
-                    ASSISTANT_ID,
-                    typeof apiResponse === 'string' ? apiResponse : JSON.stringify(apiResponse),
-                    state,
-                    undefined,
-                    ctx.from,
-                    ctx.from
-                );
-                if (assistantApiResponse) {
-                    const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
-                    await flowDynamic([{ body: cleanText.trim() }]);
-                }
-                return state;
-            }
-        }
-        // --- FIN FLUJO RISERVI Y LIMPIEZA ANTES DE CHUNKS ---
-
-        // --- LIMPIEZA DE BLOQUES JSON EN TODA RESPUESTA ---
-        const cleanTextResponse = limpiarBloquesJSON(textResponse);
-        if (cleanTextResponse.trim().length > 0) {
-            const chunks = cleanTextResponse.split(/\n\n+/);
-            for (const chunk of chunks) {
-                if (chunk.trim().length > 0) {
-                    await flowDynamic([{ body: chunk.trim() }]);
-                }
-            }
-        }
+        await analizarYProcesarRespuestaAsistente(response, ctx, flowDynamic, state, provider, gotoFlow);
         return state;
     } catch (error) {
         console.error("Error al procesar el mensaje del usuario:", error);
-
-        // Enviar reporte de error al grupo de WhatsApp
         await errorReporter.reportError(
             error,
             ctx.from,
             `https://wa.me/${ctx.from}`
         );
-
-        // 📌 Manejo de error: volver al flujo adecuado
         if (ctx.type === EVENTS.VOICE_NOTE) {
             return gotoFlow(welcomeFlowVoice);
         } else {
@@ -374,6 +143,178 @@ export const processUserMessage = async (
         }
     }
 };
+
+// --- LÓGICA REUTILIZABLE PARA ANÁLISIS Y PROCESAMIENTO DE RESPUESTAS DEL ASISTENTE ---
+async function analizarYProcesarRespuestaAsistente(response, ctx, flowDynamic, state, provider, gotoFlow) {
+    // --- INICIO FLUJO RISERVI Y LIMPIEZA ANTES DE CHUNKS ---
+    // Buscar y procesar bloques JSON antes de cualquier envío al usuario
+    let jsonData = null;
+    const textResponse = typeof response === "string" ? response : String(response);
+    const jsonDisponibleMatch = textResponse.match(/\[JSON-DISPONIBLE\]([\s\S]*?)\[\/JSON-DISPONIBLE\]/);
+    const jsonReservaMatch = textResponse.match(/\[JSON-RESERVA\]([\s\S]*?)\[\/JSON-RESERVA\]/);
+    const jsonModificarMatch = textResponse.match(/\[JSON-MODIFICAR\]([\s\S]*?)\[\/JSON-MODIFICAR\]/);
+    const jsonCancelarMatch = textResponse.match(/\[JSON-CANCELAR\]([\s\S]*?)\[\/JSON-CANCELAR\]/);
+    if (jsonDisponibleMatch) {
+        try {
+            jsonData = JSON.parse(jsonDisponibleMatch[1]);
+        } catch (e) { jsonData = null; }
+    } else if (jsonReservaMatch) {
+        try {
+            jsonData = JSON.parse(jsonReservaMatch[1]);
+        } catch (e) { jsonData = null; }
+    } else if (jsonModificarMatch) {
+        try {
+            jsonData = JSON.parse(jsonModificarMatch[1]);
+        } catch (e) { jsonData = null; }
+    } else if (jsonCancelarMatch) {
+        try {
+            jsonData = JSON.parse(jsonCancelarMatch[1]);
+        } catch (e) { jsonData = null; }
+    }
+    if (!jsonData) {
+        jsonData = JsonBlockFinder.buscarBloquesJSONEnTexto(textResponse);
+        if (!jsonData && typeof response === 'object') {
+            jsonData = JsonBlockFinder.buscarBloquesJSONProfundo(response);
+        }
+    }
+    if (jsonData) {
+        if (jsonData.type === "#DISPONIBLE#") {
+            const fechaOriginal = jsonData.date;
+            const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
+            if (fechaOriginal !== fechaCorregida) {
+                jsonData.date = fechaCorregida;
+            }
+            if (!esFechaFutura(jsonData.date)) {
+                const mensaje = 'La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida.';
+                await flowDynamic([{ body: mensaje }]);
+                return;
+            }
+            const apiResponse = await checkAvailability(
+                jsonData.date,
+                jsonData.partySize,
+                process.env.RESERVI_API_KEY
+            );
+            let horariosDisponibles = [];
+            if (apiResponse?.response?.availability) {
+                horariosDisponibles = apiResponse.response.availability
+                    .filter(slot => slot.available)
+                    .map(slot => slot.time);
+            }
+            let resumen;
+            if (horariosDisponibles.length > 0) {
+                resumen = `Horarios disponibles para tu reserva: ${horariosDisponibles.join(', ')}`;
+            } else {
+                resumen = "No hay horarios disponibles para la fecha y cantidad de personas solicitadas.";
+            }
+            if (jsonData.date && jsonData.partySize) {
+                const pedirDatos = `Por favor, completa los datos restantes para la reserva del ${jsonData.date} para ${jsonData.partySize} personas (nombre, teléfono, email, etc).`;
+                const assistantApiResponse = await getAssistantResponse(
+                    ASSISTANT_ID,
+                    pedirDatos,
+                    state,
+                    undefined,
+                    ctx.from,
+                    ctx.from
+                );
+                if (assistantApiResponse) {
+                    const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
+                    await flowDynamic([{ body: cleanText.trim() }]);
+                }
+                return;
+            }
+            const assistantApiResponse = await getAssistantResponse(
+                ASSISTANT_ID,
+                resumen,
+                state,
+                "Por favor, responde aunque sea brevemente.",
+                ctx.from,
+                ctx.from
+            );
+            if (assistantApiResponse) {
+                const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
+                await flowDynamic([{ body: cleanText.trim() }]);
+            }
+            return;
+        } else if (jsonData.type === "#RESERVA#") {
+            const fechaOriginal = jsonData.date;
+            const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
+            if (fechaOriginal !== fechaCorregida) {
+                jsonData.date = fechaCorregida;
+            }
+            if (!esFechaFutura(jsonData.date)) {
+                const mensaje = 'La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida.';
+                await flowDynamic([{ body: mensaje }]);
+                return;
+            }
+            const apiResponse = await createReservation(
+                jsonData,
+                process.env.RESERVI_API_KEY
+            );
+            const assistantApiResponse = await getAssistantResponse(
+                ASSISTANT_ID,
+                typeof apiResponse === 'string' ? apiResponse : JSON.stringify(apiResponse),
+                state,
+                undefined,
+                ctx.from,
+                ctx.from
+            );
+            if (assistantApiResponse) {
+                const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
+                await flowDynamic([{ body: cleanText.trim() }]);
+            }
+            return;
+        } else if (jsonData.type === "#MODIFICAR#") {
+            const apiResponse = await updateReservationById(
+                jsonData.id,
+                jsonData.date,
+                jsonData.partySize,
+                process.env.RESERVI_API_KEY
+            );
+            const assistantApiResponse = await getAssistantResponse(
+                ASSISTANT_ID,
+                typeof apiResponse === 'string' ? apiResponse : JSON.stringify(apiResponse),
+                state,
+                undefined,
+                ctx.from,
+                ctx.from
+            );
+            if (assistantApiResponse) {
+                const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
+                await flowDynamic([{ body: cleanText.trim() }]);
+            }
+            return;
+        } else if (jsonData.type === "#CANCELAR#") {
+            const apiResponse = await cancelReservationById(
+                jsonData.id,
+                process.env.RESERVI_API_KEY
+            );
+            const assistantApiResponse = await getAssistantResponse(
+                ASSISTANT_ID,
+                typeof apiResponse === 'string' ? apiResponse : JSON.stringify(apiResponse),
+                state,
+                undefined,
+                ctx.from,
+                ctx.from
+            );
+            if (assistantApiResponse) {
+                const cleanText = limpiarBloquesJSON(String(assistantApiResponse));
+                await flowDynamic([{ body: cleanText.trim() }]);
+            }
+            return;
+        }
+    }
+    // --- FIN FLUJO RISERVI Y LIMPIEZA ANTES DE CHUNKS ---
+    // --- LIMPIEZA DE BLOQUES JSON EN TODA RESPUESTA ---
+    const cleanTextResponse = limpiarBloquesJSON(textResponse);
+    if (cleanTextResponse.trim().length > 0) {
+        const chunks = cleanTextResponse.split(/\n\n+/);
+        for (const chunk of chunks) {
+            if (chunk.trim().length > 0) {
+                await flowDynamic([{ body: chunk.trim() }]);
+            }
+        }
+    }
+}
 
 
 const handleQueue = async (userId) => {
@@ -428,7 +369,6 @@ const main = async () => {
                 io.on('connection', (socket) => {
                     console.log('💬 Cliente web conectado');
                     socket.on('message', async (msg) => {
-                        // Procesar el mensaje usando la lógica principal del bot
                         try {
                             let ip = '';
                             const xff = socket.handshake.headers['x-forwarded-for'];
@@ -439,7 +379,6 @@ const main = async () => {
                             } else {
                                 ip = socket.handshake.address || '';
                             }
-                            // Centralizar historial y estado igual que WhatsApp
                             if (!global.webchatHistories) global.webchatHistories = {};
                             const historyKey = `webchat_${ip}`;
                             if (!global.webchatHistories[historyKey]) global.webchatHistories[historyKey] = [];
@@ -478,7 +417,10 @@ const main = async () => {
                                 await state.clear();
                                 replyText = "🔄 El chat ha sido reiniciado. Puedes comenzar una nueva conversación.";
                             } else {
-                                await processUserMessage({ from: ip, body: msg, type: 'webchat' }, { flowDynamic, state, provider, gotoFlow });
+                                // Obtener respuesta del asistente
+                                const response = await getAssistantResponse(ASSISTANT_ID, msg, state, undefined, ip, ip);
+                                // Procesar y limpiar la respuesta igual que WhatsApp
+                                await analizarYProcesarRespuestaAsistente(response, { from: ip, body: msg, type: 'webchat' }, flowDynamic, state, provider, gotoFlow);
                             }
                             socket.emit('reply', replyText);
                         } catch (err) {
