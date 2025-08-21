@@ -124,7 +124,7 @@ export class AssistantResponseProcessor {
                     await flowDynamic([{ body: cleanText.trim() }]);
                 }
                 return;
-            } else if (jsonData.type === "#RESERVA#") {
+            } else if (typeof jsonData.type === 'string' && jsonData.type.trim() === "#RESERVA#") {
                 const fechaOriginal = jsonData.date;
                 const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
                 if (fechaOriginal !== fechaCorregida) {
