@@ -41,27 +41,29 @@ export class AssistantResponseProcessor {
         const jsonReservaMatch = textResponse.match(/\[JSON-RESERVA\]([\s\S]*?)\[\/JSON-RESERVA\]/);
         const jsonModificarMatch = textResponse.match(/\[JSON-MODIFICAR\]([\s\S]*?)\[\/JSON-MODIFICAR\]/);
         const jsonCancelarMatch = textResponse.match(/\[JSON-CANCELAR\]([\s\S]*?)\[\/JSON-CANCELAR\]/);
-        if (jsonDisponibleMatch) {
-            try {
-                jsonData = JSON.parse(jsonDisponibleMatch[1]);
-            } catch (e) { jsonData = null; }
-        } else if (jsonReservaMatch) {
-            try {
-                jsonData = JSON.parse(jsonReservaMatch[1]);
-            } catch (e) { jsonData = null; }
-        } else if (jsonModificarMatch) {
-            try {
-                jsonData = JSON.parse(jsonModificarMatch[1]);
-            } catch (e) { jsonData = null; }
-        } else if (jsonCancelarMatch) {
-            try {
-                jsonData = JSON.parse(jsonCancelarMatch[1]);
-            } catch (e) { jsonData = null; }
-        }
+            const blockRegex = /\[(JSON-(DISPONIBLE|RESERVA|MODIFICAR|CANCELAR))\](.*?)\[\/\1\]/s;
+            const match = textResponse.match(blockRegex);
+            if (match) {
+                const tipo = match[2];
+                const jsonStr = match[3].trim();
+                try {
+                    jsonData = JSON.parse(jsonStr);
+                } catch (e) { jsonData = null; }
+            }
         if (!jsonData) {
             jsonData = JsonBlockFinder.buscarBloquesJSONEnTexto(textResponse);
             if (!jsonData && typeof response === 'object') {
                 jsonData = JsonBlockFinder.buscarBloquesJSONProfundo(response);
+            }
+        }
+        // --- MEJORA: Procesar bloque JSON aunque llegue solo, sin texto adicional ---
+        if (!jsonData && (textResponse.trim().startsWith('[JSON-') && textResponse.trim().endsWith(']'))) {
+            // Buscar cualquier bloque JSON válido aunque sea la única línea
+            const soloMatch = textResponse.match(/\[(JSON-DISPONIBLE|JSON-RESERVA|JSON-MODIFICAR|JSON-CANCELAR)\]([\s\S]*?)\[\/(JSON-DISPONIBLE|JSON-RESERVA|JSON-MODIFICAR|JSON-CANCELAR)\]/);
+            if (soloMatch) {
+                try {
+                    jsonData = JSON.parse(soloMatch[2]);
+                } catch (e) { jsonData = null; }
             }
         }
         if (jsonData) {

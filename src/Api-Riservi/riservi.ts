@@ -25,7 +25,7 @@ import axios from "axios";
 import moment from "moment";
 import "dotenv/config";
 
-const BASE_URL = "https://partnersdev.riservi.com/api/v1/restaurants";
+const BASE_URL = "https://partners.riservi.com/api/v1/restaurants";
 const API_KEY = process.env.RESERVI_API_KEY ?? "";
 
 export const createReservation = async (reserva: any, apiKey?: string) => {
@@ -90,7 +90,8 @@ export const createReservation = async (reserva: any, apiKey?: string) => {
             payload[key] = reserva[key];
         }
     }
-    // ...
+    // LOG de entrada para createReservation
+    console.log('[Riservi API] createReservation payload:', JSON.stringify(payload, null, 2));
 
     try {
         const response = await axios.post(
@@ -132,6 +133,8 @@ export const checkAvailability = async (date: string, people: number, apiKey?: s
     const keyToUse = apiKey || API_KEY;
     const urlDate = encodeURIComponent(date);
     const url = `${BASE_URL}/availability/available-slots/${urlDate}/${people}`;
+    // LOG de entrada para checkAvailability
+    console.log('[Riservi API] checkAvailability params:', { date, people });
     try {
         const response = await axios.get(url, {
             headers: {
@@ -200,6 +203,10 @@ export const updateReservationById = async (
         preferredArea: reserva.preferredArea,
         sendEmailToDiner: typeof reserva.sendEmailToDiner === 'boolean' ? reserva.sendEmailToDiner : true
     };
+    // LOG de entrada para updateReservationById
+    console.log('[Riservi API] updateReservationById params:', { id, newDate, newPartySize });
+    console.log('[Riservi API] updateReservationById payload:', JSON.stringify(payload, null, 2));
+
     // Puedes agregar otros campos si son requeridos por la API
     const url = `${BASE_URL}/bookings/${id}`;
     try {
@@ -222,6 +229,8 @@ export const updateReservationById = async (
 export const cancelReservationById = async (id: string, apiKey?: string) => {
     const keyToUse = apiKey || API_KEY;
     const url = `${BASE_URL}/bookings/${id}/cancel`;
+    // LOG de entrada para cancelReservationById
+    console.log('[Riservi API] cancelReservationById params:', { id });
     try {
         const response = await axios.patch(url, {}, {
             headers: {
