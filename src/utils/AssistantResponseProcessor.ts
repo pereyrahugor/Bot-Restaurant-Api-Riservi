@@ -3,11 +3,7 @@ import { JsonBlockFinder } from "../Api-Riservi/JsonBlockFinder";
 import { checkAvailability, createReservation, updateReservationById, cancelReservationById } from "../Api-Riservi/riservi";
 
 function limpiarBloquesJSON(texto: string): string {
-    return texto
-        .replace(/\[JSON-DISPONIBLE\][\s\S]*?\[\/JSON-DISPONIBLE\]/g, "")
-        .replace(/\[JSON-RESERVA\][\s\S]*?\[\/JSON-RESERVA\]/g, "")
-        .replace(/\[JSON-MODIFICAR\][\s\S]*?\[\/JSON-MODIFICAR\]/g, "")
-        .replace(/\[JSON-CANCELAR\][\s\S]*?\[\/JSON-CANCELAR\]/g, "");
+    return texto.replace(/\[API\][\s\S]*?\[\/API\]/g, "");
 }
 
 function corregirFechaAnioVigente(fechaReservaStr: string): string {
@@ -37,27 +33,38 @@ export class AssistantResponseProcessor {
         getAssistantResponse: Function,
         ASSISTANT_ID: string
     ) {
+        // Log de mensaje entrante del asistente (antes de cualquier filtro)
+        if (ctx && ctx.type === 'webchat') {
+            console.log('[Webchat Debug] Mensaje entrante del asistente:', response);
+        } else {
+            console.log('[WhatsApp Debug] Mensaje entrante del asistente:', response);
+        }
         let jsonData: any = null;
         const textResponse = typeof response === "string" ? response : String(response || "");
 
-        // 1) Intentar extraer bloque explícito
-        const blockRegex = /\[(JSON-(DISPONIBLE|RESERVA|MODIFICAR|CANCELAR))\](.*?)\[\/\1\]/is;
-        const match = textResponse.match(blockRegex);
+        // Log de mensaje saliente al usuario (antes de cualquier filtro)
+        if (ctx && ctx.type === 'webchat') {
+            console.log('[Webchat Debug] Mensaje saliente al usuario (sin filtrar):', textResponse);
+        } else {
+            console.log('[WhatsApp Debug] Mensaje saliente al usuario (sin filtrar):', textResponse);
+        }
+        // 1) Extraer bloque [API] ... [/API]
+        const apiBlockRegex = /\[API\](.*?)\[\/API\]/is;
+        const match = textResponse.match(apiBlockRegex);
         if (match) {
-            const tipo = match[2];
-            const jsonStr = match[3].trim();
+            const jsonStr = match[1].trim();
             try {
                 jsonData = JSON.parse(jsonStr);
-                jsonData.type = `#${tipo.toUpperCase()}#`;
             } catch (e) {
                 jsonData = null;
                 if (ctx && ctx.type === 'webchat') {
-                    console.log('[Webchat Debug] Failed to parse JSON block:', jsonStr);
+                    console.log('[Webchat Debug] Error al parsear bloque [API]:', jsonStr);
                 }
             }
         }
 
-        // 2) Fallback heurístico
+        // 2) Fallback heurístico (desactivado, solo [API])
+        // jsonData = null;
         if (!jsonData) {
             jsonData = JsonBlockFinder.buscarBloquesJSONEnTexto(textResponse) || (typeof response === "object" ? JsonBlockFinder.buscarBloquesJSONProfundo(response) : null);
             if (!jsonData && ctx && ctx.type === 'webchat') {
@@ -77,10 +84,9 @@ export class AssistantResponseProcessor {
                     await flowDynamic([{ body: "La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida." }]);
                     return;
                 }
+                console.log('[API Debug] Llamada a checkAvailability:', jsonData.date, jsonData.partySize);
                 const apiResponse = await checkAvailability(jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
-                if (ctx && ctx.type === 'webchat') {
-                    console.log('[Webchat Debug] checkAvailability response:', apiResponse);
-                }
+                console.log('[API Debug] Respuesta de checkAvailability:', apiResponse);
                 let horariosDisponibles: string[] = [];
                 if (apiResponse?.response?.availability) horariosDisponibles = apiResponse.response.availability.filter((s: any) => s.available).map((s: any) => s.time);
                 const resumen = horariosDisponibles.length > 0 ? `Horarios disponibles para tu reserva: ${horariosDisponibles.join(", ")}` : "No hay horarios disponibles para la fecha y cantidad de personas solicitadas.";
@@ -116,38 +122,69 @@ export class AssistantResponseProcessor {
                 }
                 // Siempre llamar a la API antes de limpiar/enviar el texto
                 console.log('[Debug] RESERVA: Payload para createReservation:', JSON.stringify(jsonData));
+                console.log('[API Debug] Llamada a createReservation:', JSON.stringify(jsonData));
                 let apiResponse;
+                let reservaId = null;
+                let apiError = null;
                 try {
                     apiResponse = await createReservation(jsonData, process.env.RESERVI_API_KEY);
-                    console.log('[Debug] RESERVA: Respuesta de createReservation:', apiResponse);
+                    console.log('[API Debug] Respuesta de createReservation:', apiResponse);
+                    reservaId = apiResponse && (apiResponse.reservaId || apiResponse.id || apiResponse.bookingId || apiResponse.reservationId);
+                    if (apiResponse && (apiResponse.error || apiResponse.errors)) {
+                        apiError = apiResponse.error || JSON.stringify(apiResponse.errors);
+                    }
                 } catch (err) {
+                    apiError = err?.message || String(err);
                     console.error('[Debug] RESERVA: Error en createReservation:', err);
                 }
+                // Si hay error, enviar al usuario y no reintentar
+                if (apiError) {
+                    await flowDynamic([{ body: `No se pudo crear la reserva: ${apiError}` }]);
+                    state.reservaEnCurso = false;
+                    return;
+                }
+                // Siempre iniciar el ciclo de espera y reintento con ok tras procesar [JSON-RESERVA]
+                let assistantApiResponse;
+                let intentos = 0;
+                do {
+                    if (intentos === 0) {
+                        await new Promise(res => setTimeout(res, 30000));
+                    } else {
+                        await new Promise(res => setTimeout(res, 10000));
+                    }
+                    assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, ctx.from);
+                    intentos++;
+                    if (assistantApiResponse && reservaId) {
+                        if (assistantApiResponse.includes(reservaId)) {
+                            console.log(`[Debug] RESERVA: Respuesta del asistente contiene el id (${reservaId}), se envía al usuario.`);
+                            await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
+                            break;
+                        } else {
+                            console.log(`[Debug] RESERVA: Respuesta no contiene el id (${reservaId}), esperando y reenviando ok...`);
+                        }
+                    }
+                } while (assistantApiResponse && reservaId && !assistantApiResponse.includes(reservaId) && intentos < 10);
+                // Si nunca se recibió el id, enviar mensaje de error/fallback
+                if (reservaId && (!assistantApiResponse || !assistantApiResponse.includes(reservaId))) {
+                    await flowDynamic([{ body: `No se recibió confirmación de la reserva. Por favor, intenta nuevamente o consulta con el restaurante.` }]);
+                }
                 state.reservaEnCurso = false;
-                // Limpiar el bloque y enviar solo el texto al usuario
-                const cleanTextResponse = limpiarBloquesJSON(textResponse).trim();
-                if (cleanTextResponse.length > 0) await flowDynamic([{ body: cleanTextResponse }]);
-                // (Opcional) Enviar respuesta de la API al asistente si lo necesitas
-                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
-                if (assistantApiResponse) await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
                 return;
             }
 
             if (tipo === "#MODIFICAR#") {
+                console.log('[API Debug] Llamada a updateReservationById:', jsonData.id, jsonData.date, jsonData.partySize);
                 const apiResponse = await updateReservationById(jsonData.id, jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
-                if (ctx && ctx.type === 'webchat') {
-                    console.log('[Webchat Debug] updateReservationById response:', apiResponse);
-                }
+                console.log('[API Debug] Respuesta de updateReservationById:', apiResponse);
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
                 return;
             }
 
             if (tipo === "#CANCELAR#") {
+                console.log('[API Debug] Llamada a cancelReservationById:', jsonData.id);
                 const apiResponse = await cancelReservationById(jsonData.id, process.env.RESERVI_API_KEY);
-                if (ctx && ctx.type === 'webchat') {
-                    console.log('[Webchat Debug] cancelReservationById response:', apiResponse);
-                }
+                console.log('[API Debug] Respuesta de cancelReservationById:', apiResponse);
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
                 return;
@@ -155,8 +192,23 @@ export class AssistantResponseProcessor {
         }
 
         // Si no hubo bloque JSON válido, enviar el texto limpio
-        const cleanTextResponse = limpiarBloquesJSON(textResponse);
-        if (cleanTextResponse.trim().length > 0) {
+        let cleanTextResponse = limpiarBloquesJSON(textResponse).trim();
+        // Lógica especial para reserva: espera y reintento
+        if (cleanTextResponse.includes('Voy a proceder a realizar la reserva.')) {
+            // Espera 30 segundos y responde ok al asistente
+            await new Promise(res => setTimeout(res, 30000));
+            let assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, ctx.from);
+            // Si la respuesta contiene (ID: ...), no la envíes al usuario, espera 10s y vuelve a enviar ok
+            while (assistantApiResponse && /(ID:\s*\w+)/.test(assistantApiResponse)) {
+                console.log('[Debug] Respuesta contiene ID de reserva, esperando 10s y reenviando ok...');
+                await new Promise(res => setTimeout(res, 10000));
+                assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, ctx.from);
+            }
+            // Cuando la respuesta no contiene el ID, envíala al usuario
+            if (assistantApiResponse) {
+                await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
+            }
+        } else if (cleanTextResponse.length > 0) {
             const chunks = cleanTextResponse.split(/\n\n+/);
             for (const chunk of chunks) {
                 if (chunk.trim().length > 0) {
