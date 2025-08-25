@@ -143,29 +143,10 @@ export class AssistantResponseProcessor {
                     state.reservaEnCurso = false;
                     return;
                 }
-                // Siempre iniciar el ciclo de espera y reintento con ok tras procesar [JSON-RESERVA]
-                let assistantApiResponse;
-                let intentos = 0;
-                do {
-                    if (intentos === 0) {
-                        await new Promise(res => setTimeout(res, 30000));
-                    } else {
-                        await new Promise(res => setTimeout(res, 10000));
-                    }
-                    assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, ctx.from);
-                    intentos++;
-                    if (assistantApiResponse && reservaId) {
-                        if (assistantApiResponse.includes(reservaId)) {
-                            console.log(`[Debug] RESERVA: Respuesta del asistente contiene el id (${reservaId}), se envía al usuario.`);
-                            await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
-                            break;
-                        } else {
-                            console.log(`[Debug] RESERVA: Respuesta no contiene el id (${reservaId}), esperando y reenviando ok...`);
-                        }
-                    }
-                } while (assistantApiResponse && reservaId && !assistantApiResponse.includes(reservaId) && intentos < 10);
-                // Si nunca se recibió el id, enviar mensaje de error/fallback
-                if (reservaId && (!assistantApiResponse || !assistantApiResponse.includes(reservaId))) {
+                // Enviar confirmación simple al usuario con el ID real
+                if (reservaId) {
+                    await flowDynamic([{ body: `reserva confirmada ID:${reservaId}` }]);
+                } else {
                     await flowDynamic([{ body: `No se recibió confirmación de la reserva. Por favor, intenta nuevamente o consulta con el restaurante.` }]);
                 }
                 state.reservaEnCurso = false;
