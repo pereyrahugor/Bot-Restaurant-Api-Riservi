@@ -25,8 +25,8 @@ import axios from "axios";
 import moment from "moment";
 import "dotenv/config";
 
-const BASE_URL = "https://partnersdev.riservi.com/api/v1/restaurants";
-//const BASE_URL = "https://partners.riservi.com/api/v1/restaurants";
+//const BASE_URL = "https://partnersdev.riservi.com/api/v1/restaurants";
+const BASE_URL = "https://partners.riservi.com/api/v1/restaurants";
 const API_KEY = process.env.RESERVI_API_KEY ?? "";
 
 export const createReservation = async (reserva: any, apiKey?: string) => {

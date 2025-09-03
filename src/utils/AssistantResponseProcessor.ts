@@ -1,6 +1,8 @@
 // src/utils/AssistantResponseProcessor.ts
 import { JsonBlockFinder } from "../Api-Riservi/JsonBlockFinder";
 import { checkAvailability, createReservation, updateReservationById, cancelReservationById } from "../Api-Riservi/riservi";
+import fs from 'fs';
+import moment from 'moment';
 
 function limpiarBloquesJSON(texto: string): string {
     return texto.replace(/\[API\][\s\S]*?\[\/API\]/g, "");
@@ -87,18 +89,53 @@ export class AssistantResponseProcessor {
                 console.log('[API Debug] Llamada a checkAvailability:', jsonData.date, jsonData.partySize);
                 const apiResponse = await checkAvailability(jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
                 console.log('[API Debug] Respuesta de checkAvailability:', apiResponse);
-                let horariosDisponibles: string[] = [];
-                if (apiResponse?.response?.availability) horariosDisponibles = apiResponse.response.availability.filter((s: any) => s.available).map((s: any) => s.time);
-                const resumen = horariosDisponibles.length > 0 ? `Horarios disponibles para tu reserva: ${horariosDisponibles.join(", ")}` : "No hay horarios disponibles para la fecha y cantidad de personas solicitadas.";
-                if (jsonData.date && jsonData.partySize) {
+                const logPath = 'd:/Dev/Bot-Restaurant-Api-Riservi/logs/checkAvailability_full_response.txt';
+                try {
+                    fs.appendFileSync(logPath, `\n--- Nueva respuesta ---\n${JSON.stringify(apiResponse, null, 2)}\n`);
+                } catch (err) {
+                    console.error('[Log Error] No se pudo guardar la respuesta completa en el archivo:', err);
+                }
+                console.log('[API Debug] Respuesta COMPLETA de checkAvailability guardada en logs/checkAvailability_full_response.txt');
+                    let disponibilidadExacta = false;
+                    const horariosDisponibles: string[] = [];
+                    if (apiResponse?.response?.response?.availability) {
+                        console.log('[Disponibilidad] response.response.availability:', JSON.stringify(apiResponse.response.response.availability, null, 2));
+                        const queryTime = moment(jsonData.date, ["YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", moment.ISO_8601]).format("YYYY-MM-DD HH:mm");
+                        for (const slot of apiResponse.response.response.availability) {
+                            const slotTime = moment(slot.time, ["YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", moment.ISO_8601]).format("YYYY-MM-DD HH:mm");
+                            console.log(`[Disponibilidad] Slot: time=${slotTime}, available=${slot.available}`);
+                            // Verifica fecha y disponibilidad usando el dato enviado a la API
+                            if (slotTime === queryTime && slot.available) {
+                                disponibilidadExacta = true;
+                                console.log(`[Disponibilidad] Hora exacta encontrada: ${slotTime} disponible para reservar para partySize=${jsonData.partySize}.`);
+                            } else if (slotTime === queryTime && !slot.available) {
+                                console.log(`[Disponibilidad] Hora exacta encontrada: ${slotTime} NO disponible para reservar.`);
+                            }
+                            if (slot.available) {
+                                horariosDisponibles.push(slotTime);
+                            }
+                        }
+                    }
+                // Nunca enviar la respuesta cruda de la API al usuario
+                if (disponibilidadExacta) {
+                    // Hay disponibilidad exacta para la fecha/hora solicitada
                     const pedirDatos = `Por favor, completa los datos restantes para la reserva del ${jsonData.date} para ${jsonData.partySize} personas (nombre, teléfono, email, etc).`;
                     const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, pedirDatos, state, undefined, ctx.from, ctx.from);
                     if (assistantApiResponse) await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
                     return;
+                } else if (horariosDisponibles.length > 0) {
+                    // No hay disponibilidad exacta, pero hay horarios alternativos
+                    const resumen = `No hay disponibilidad para la fecha/hora solicitada. Horarios alternativos disponibles: ${horariosDisponibles.join(", ")}`;
+                    const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, resumen, state, "Por favor, responde aunque sea brevemente.", ctx.from, ctx.from);
+                    if (assistantApiResponse) await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
+                    return;
+                } else {
+                    // No hay disponibilidad en ningún horario
+                    const resumen = "No hay horarios disponibles para la fecha y cantidad de personas solicitadas.";
+                    const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, resumen, state, "Por favor, responde aunque sea brevemente.", ctx.from, ctx.from);
+                    if (assistantApiResponse) await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
+                    return;
                 }
-                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, resumen, state, "Por favor, responde aunque sea brevemente.", ctx.from, ctx.from);
-                if (assistantApiResponse) await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
-                return;
             }
 
             if (tipo === "#RESERVA#") {
@@ -173,7 +210,7 @@ export class AssistantResponseProcessor {
         }
 
         // Si no hubo bloque JSON válido, enviar el texto limpio
-        let cleanTextResponse = limpiarBloquesJSON(textResponse).trim();
+    const cleanTextResponse = limpiarBloquesJSON(textResponse).trim();
         // Lógica especial para reserva: espera y reintento
         if (cleanTextResponse.includes('Voy a proceder a realizar la reserva.')) {
             // Espera 30 segundos y responde ok al asistente
