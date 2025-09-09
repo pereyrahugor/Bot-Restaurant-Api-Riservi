@@ -5,7 +5,23 @@
   "plugins": ["docker"],
   "envs": [
     { "key": "ASSISTANT_ID", "name": "Assistant ID", "required": true },
+    { "key": "ASSISTANT_ID_IMG", "name": "Assistant ID Imagen", "required": false },
     { "key": "OPENAI_API_KEY", "name": "Clave API OpenAI", "required": true },
-    { "key": "RESERVI_API_KEY", "name": "Clave API Reservi", "required": true }
+    { "key": "OPENAI_API_KEY_IMG", "name": "Clave API OpenAI Imagen", "required": false },
+    { "key": "RESERVI_API_KEY", "name": "Clave API Reservi", "required": true },
+    { "key": "PORT", "name": "Puerto", "required": false },
+    { "key": "ID_GRUPO_RESUMEN", "name": "ID Grupo Resumen", "required": false },
+    { "key": "ID_GRUPO_WS", "name": "ID Grupo WS", "required": false },
+    { "key": "SHEET_ID_RESUMEN", "name": "Sheet ID Resumen", "required": false },
+    { "key": "SHEET_RESUMEN_RANGE", "name": "Sheet Resumen Range", "required": false },
+    { "key": "timeOutCierre", "name": "Timeout Cierre", "required": false },
+    { "key": "timeOutSeguimiento2", "name": "Timeout Seguimiento 2", "required": false },
+    { "key": "timeOutSeguimiento3", "name": "Timeout Seguimiento 3", "required": false },
+    { "key": "msjCierre", "name": "Mensaje Cierre", "required": false },
+    { "key": "msjSeguimiento1", "name": "Mensaje Seguimiento 1", "required": false },
+    { "key": "msjSeguimiento2", "name": "Mensaje Seguimiento 2", "required": false },
+  { "key": "msjSeguimiento3", "name": "Mensaje Seguimiento 3", "required": false },
+  { "key": "resumenOn", "name": "Activar flujo resumen (idleFlow)", "required": false, "values": ["on", "off"] },
+  { "key": "followOn", "name": "Activar flujo seguimiento (reconectionFlow)", "required": false, "values": ["on", "off"] }
   ]
 }

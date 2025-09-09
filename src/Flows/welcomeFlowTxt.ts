@@ -2,8 +2,9 @@ import { addKeyword, EVENTS } from "@builderbot/bot";
 import { BaileysProvider } from "@builderbot/provider-baileys";
 import { MemoryDB } from "@builderbot/bot";
 import { reset } from "~/utils/timeOut";
-import { handleQueue, userQueues, userLocks } from "../app";
-const setTime = 7 * 60 * 1000 // tiempo de espera antes de finalizar el chat - en millisegundos (minutos*60*1000)
+import { handleQueue, userQueues, userLocks } from "~/app";
+// Si se define timeOutCierre en minutos en .env, se multiplica por 60*1000 para obtener milisegundos
+const setTime = Number(process.env.timeOutCierre) * 60 * 1000;
 
 export const welcomeFlowTxt = addKeyword<BaileysProvider, MemoryDB>(EVENTS.WELCOME)
     .addAction(async (ctx, { gotoFlow, flowDynamic, state, provider }) => {

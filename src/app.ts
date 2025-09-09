@@ -178,7 +178,11 @@ export const handleQueue = async (userId) => {
 const main = async () => {
 
     // ...existing code...
-                const adapterFlow = createFlow([welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg, idleFlow]);
+                const flows = [welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg];
+                if (process.env.resumenOn === "on") {
+                    flows.push(idleFlow);
+                }
+                const adapterFlow = createFlow(flows);
                 const adapterProvider = createProvider(BaileysProvider, {
                     groupsIgnore: false,
                     readStatus: false,

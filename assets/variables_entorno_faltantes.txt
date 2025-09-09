@@ -1,0 +1,30 @@
+# Variables de entorno utilizadas en el repositorio
+# (Agrega estas líneas a tu archivo .env si no existen)
+
+ASSISTANT_ID=
+ASSISTANT_ID_IMG=
+OPENAI_API_KEY=
+OPENAI_API_KEY_IMG=
+RESERVI_API_KEY=
+PORT=
+ID_GRUPO_RESUMEN=
+ID_GRUPO_WS=
+SHEET_ID_RESUMEN=
+SHEET_RESUMEN_RANGE=
+timeOutCierre=
+timeOutSeguimiento2=
+timeOutSeguimiento3=
+msjCierre=
+msjSeguimiento1=
+msjSeguimiento2=
+msjSeguimiento3=
+
+# Completa los valores según tu entorno y llaves reales.
+# Ejemplo:
+# ASSISTANT_ID=asst_xxxxx
+# OPENAI_API_KEY=sk-xxxx
+# RESERVI_API_KEY=PROD-xxxx
+# PORT=3008
+# SHEET_ID_RESUMEN=xxxx
+# msjCierre=Texto de cierre
+# timeOutCierre=5

@@ -25,6 +25,9 @@ export class ReconectionFlow {
     private readonly onSuccess: (data: ResumenData) => Promise<void>; // Acción al obtener nombre
     private readonly onFail: () => Promise<void>; // Acción al fallar todos los intentos
     private readonly ASSISTANT_ID = process.env.ASSISTANT_ID ?? '';
+    private readonly msjSeguimiento1: string;
+    private readonly msjSeguimiento2: string;
+    private readonly msjSeguimiento3: string;
 
     constructor(options: ReconectionOptions) {
         this.ctx = options.ctx;
@@ -34,6 +37,17 @@ export class ReconectionFlow {
         this.timeoutMs = options.timeoutMs ?? 60000;
         this.onSuccess = options.onSuccess;
         this.onFail = options.onFail;
+
+        // Validar que las variables de entorno requeridas existen y no son vacías
+        const msj1 = process.env.msjSeguimiento1;
+        const msj2 = process.env.msjSeguimiento2;
+        const msj3 = process.env.msjSeguimiento3;
+        if (!msj1 || !msj2 || !msj3) {
+            throw new Error('[ReconectionFlow] Faltan variables de entorno obligatorias: msjSeguimiento1, msjSeguimiento2 o msjSeguimiento3. Verifica tu configuración.');
+        }
+        this.msjSeguimiento1 = msj1;
+        this.msjSeguimiento2 = msj2;
+        this.msjSeguimiento3 = msj3;
     }
 
     // Inicia el ciclo de reconexión
@@ -58,21 +72,34 @@ export class ReconectionFlow {
             let msg: string;
             let timeout: number;
             switch (this.attempts) {
-                case 1:
-                    msg = 'La Inteligencia Artificial ayuda a los empresarios a ahorrar costos y optimizar ventas.\n(Este es un mensaje de seguimiento 😉)';
-                    timeout = 2700000; // 45 min para el siguiente msj
+                case 1: {
+                    msg = this.msjSeguimiento1;
+                    const t2 = process.env.timeOutSeguimiento2;
+                    if (!t2 || isNaN(Number(t2))) {
+                        throw new Error('[ReconectionFlow] Falta o es inválida la variable de entorno timeOutSeguimiento2.');
+                    }
+                    timeout = Number(t2) * 60 * 1000;
                     break;
-                case 2:
-                    msg = 'Más del 34% de los leads se pierden por falta de seguimiento del vendedor, yo como IA de ventas te doy seguimiento, \nSigo aquí para ayudarte a optimizar ventas';
-                    timeout = 7200000; // 120 minutos para el siguiente msj
+                }
+                case 2: {
+                    msg = this.msjSeguimiento2;
+                    const t3 = process.env.timeOutSeguimiento3;
+                    if (!t3 || isNaN(Number(t3))) {
+                        throw new Error('[ReconectionFlow] Falta o es inválida la variable de entorno timeOutSeguimiento3.');
+                    }
+                    timeout = Number(t3) * 60 * 1000;
                     break;
+                }
                 case 3:
                 default:
-                    msg = 'El 90% de los vendedores humanos sólo envían 2 mensajes de seguimiento.\n\nAquí estoy para potenciar tus ventas, hablemos que puedo hacer por tu negocio.';
+                    msg = this.msjSeguimiento3;
                     timeout = 60000; // 1 minuto para el siguiente msj
                     break;
             }
             if (typeof timeout !== 'number' || isNaN(timeout)) timeout = this.timeoutMs;
+            if (!msg || typeof msg !== 'string' || msg.trim() === '') {
+                throw new Error(`[ReconectionFlow] El mensaje de seguimiento para el intento ${this.attempts} es vacío o inválido. Verifica tus variables de entorno.`);
+            }
             if (jid) {
                 try {
                     console.log(`[ReconectionFlow] Enviando mensaje de reconexión a:`, jid);
