@@ -1,0 +1,14 @@
+// Fragmento para enviar fecha y hora actual al asistente
+import moment from 'moment';
+
+// Obtiene la fecha y hora actual en formato YYYY-MM-DD HH:mm
+const fechaHoraActual = moment().format('YYYY-MM-DD HH:mm');
+
+// Ejemplo de mensaje para el asistente
+const mensaje = `La fecha y hora actual es: ${fechaHoraActual}`;
+
+// Enviar al asistente (reemplaza getAssistantResponse y ASSISTANT_ID por los de tu implementación)
+const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, mensaje, state, undefined, ctx.from, ctx.from);
+if (respuestaAsistente) {
+    await flowDynamic([{ body: respuestaAsistente.trim() }]);
+}

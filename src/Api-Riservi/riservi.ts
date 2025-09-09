@@ -76,7 +76,7 @@ export const createReservation = async (reserva: any, apiKey?: string) => {
         payload.preferredArea = reserva.preferredArea;
     }
     if (reserva.utmParams) payload.utmParams = reserva.utmParams;
-    if (typeof reserva.sendEmailToDiner === 'boolean') payload.sendEmailToDiner = reserva.sendEmailToDiner;
+   // if (typeof reserva.sendEmailToDiner === 'boolean') payload.sendEmailToDiner = reserva.sendEmailToDiner;
     if (reserva.promoCode) payload.promoCode = reserva.promoCode;
     if (reserva.eventTypeId) payload.eventTypeId = reserva.eventTypeId;
     if (reserva.eventSourceId) payload.eventSourceId = reserva.eventSourceId;

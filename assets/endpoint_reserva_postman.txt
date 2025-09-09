@@ -1,0 +1,54 @@
+# Endpoint y ejemplo para crear reserva en RISERVI
+
+## Endpoint
+POST https://partners.riservi.com/api/v1/restaurants/bookings/
+
+## Headers
+Authorization: Bearer <TU_API_KEY>
+Content-Type: application/json
+
+## Ejemplo de Request Body
+{
+  "reserveName": "Juan",
+  "reserveLastname": "Pérez",
+  "reserveEmail": "juan.perez@gmail.com",
+  "reservePhone": "+56912345678",
+  "partySize": 4,
+  "date": "2025-08-15 20:30"
+  // Puedes agregar más campos opcionales si lo deseas
+}
+
+## Campos opcionales admitidos
+- reserveBirthday
+- preferredLang
+- notes
+- preferredArea
+- utmParams
+- sendEmailToDiner
+- promoCode
+- eventTypeId
+- eventSourceId
+- tags
+- shift, slotId, turno, turn, availabilityId, tableId, area, service, serviceId, time, hour, dateTime, bookingToken
+
+## Ejemplo para Postman
+1. Método: POST
+2. URL: https://partners.riservi.com/api/v1/restaurants/bookings/
+3. Headers:
+   - Authorization: Bearer <TU_API_KEY>
+   - Content-Type: application/json
+4. Body (raw, JSON):
+{
+  "reserveName": "Juan",
+  "reserveLastname": "Pérez",
+  "reserveEmail": "juan.perez@gmail.com",
+  "reservePhone": "+56912345678",
+  "partySize": 4,
+  "date": "2025-08-15 20:30"
+}
+
+## Notas
+- Reemplaza <TU_API_KEY> por tu API Key real.
+- La fecha debe estar en el futuro y en formato "YYYY-MM-DD HH:mm".
+- Si la reserva es exitosa, recibirás un ID de reserva en la respuesta.
+- Si hay error, revisa el mensaje de la API para detalles.

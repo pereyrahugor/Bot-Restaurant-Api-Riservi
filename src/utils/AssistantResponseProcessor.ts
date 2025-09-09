@@ -55,6 +55,7 @@ export class AssistantResponseProcessor {
         const match = textResponse.match(apiBlockRegex);
         if (match) {
             const jsonStr = match[1].trim();
+            console.log('[Debug] Bloque [API] detectado:', jsonStr);
             try {
                 jsonData = JSON.parse(jsonStr);
             } catch (e) {
@@ -180,11 +181,13 @@ export class AssistantResponseProcessor {
                     state.reservaEnCurso = false;
                     return;
                 }
-                // Enviar confirmación simple al usuario con el ID real
-                if (reservaId) {
-                    await flowDynamic([{ body: `reserva confirmada ID:${reservaId}` }]);
-                } else {
-                    await flowDynamic([{ body: `No se recibió confirmación de la reserva. Por favor, intenta nuevamente o consulta con el restaurante.` }]);
+                // Enviar la respuesta de la API al asistente, no directamente al usuario
+                const resumenReserva = reservaId
+                    ? `reserva confirmada ID:${reservaId}`
+                    : `No se recibió confirmación de la reserva. Por favor, intenta nuevamente o consulta con el restaurante.`;
+                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, resumenReserva, state, undefined, ctx.from, ctx.from);
+                if (assistantApiResponse) {
+                    await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
                 }
                 state.reservaEnCurso = false;
                 return;
