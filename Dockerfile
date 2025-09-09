@@ -35,9 +35,6 @@ COPY tmp/ ./tmp/
 COPY README.md ./
 COPY nodemon.json ./
 COPY railway.json ./
-# En la etapa deploy, después de los otros COPY --from=builder
-COPY --from=builder /app/js ./js
-COPY --from=builder /app/style ./style
 
 # Compilar y mostrar el error real en el log de Docker, imprimiendo logs si falla
 RUN pnpm run build || (echo '--- npm-debug.log ---' && cat /app/npm-debug.log || true && echo '--- pnpm-debug.log ---' && cat /app/pnpm-debug.log || true && exit 1)
@@ -75,6 +72,8 @@ COPY --from=builder /app/src/webchat.html ./src/webchat.html
 COPY --from=builder /app/README.md ./
 COPY --from=builder /app/nodemon.json ./
 COPY --from=builder /app/railway.json ./
+COPY --from=builder /app/js ./js
+COPY --from=builder /app/style ./style
 
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
