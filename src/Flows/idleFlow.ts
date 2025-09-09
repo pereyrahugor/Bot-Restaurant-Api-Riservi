@@ -18,6 +18,9 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
         console.log("Ejecutando idleFlow...");
 
         try {
+            if (process.env.resumenOn !== "on") {
+                return; // No ejecutar nada si resumenOn no está activado
+            }
             // Obtener el resumen del asistente de OpenAI
             const resumen = await toAsk(ASSISTANT_ID, "GET_RESUMEN", state);
 
