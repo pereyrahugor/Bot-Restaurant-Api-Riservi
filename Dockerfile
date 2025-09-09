@@ -26,13 +26,18 @@ RUN pnpm install
 # Copiar el resto del código fuente y carpetas necesarias antes del build
 COPY src/ ./src/
 COPY assets/ ./assets/
-    COPY src/utils/ ./src/utils/
-    COPY src/utils-web/ ./src/utils-web/
+COPY js/ ./js/
+COPY style/ ./style/
+COPY src/utils/ ./src/utils/
+COPY src/utils-web/ ./src/utils-web/
 COPY temp/ ./temp/
 COPY tmp/ ./tmp/
 COPY README.md ./
 COPY nodemon.json ./
 COPY railway.json ./
+# Copiar js y style al contenedor final si se requieren archivos estáticos
+COPY --from=builder /app/js ./js
+COPY --from=builder /app/style ./style
 
 # Compilar y mostrar el error real en el log de Docker, imprimiendo logs si falla
 RUN pnpm run build || (echo '--- npm-debug.log ---' && cat /app/npm-debug.log || true && echo '--- pnpm-debug.log ---' && cat /app/pnpm-debug.log || true && exit 1)
