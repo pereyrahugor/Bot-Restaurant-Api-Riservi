@@ -35,7 +35,7 @@ COPY tmp/ ./tmp/
 COPY README.md ./
 COPY nodemon.json ./
 COPY railway.json ./
-# Copiar js y style al contenedor final si se requieren archivos estáticos
+# En la etapa deploy, después de los otros COPY --from=builder
 COPY --from=builder /app/js ./js
 COPY --from=builder /app/style ./style
 
