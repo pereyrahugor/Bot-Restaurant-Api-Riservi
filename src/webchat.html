@@ -1,140 +1,25 @@
 <!DOCTYPE html>
 <html lang="es">
+<!-- Evita zoom y permite layout fluido en mobile -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<link rel="stylesheet" href="style/style.css" />
+
 <head>
-  <meta charset="UTF-8">
-  <title>Web Chat Bot</title>
-  <style>
-    html, body {
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    body {
-      font-family: Arial;
-      background: #ece5dd;
-      height: 100vh;
-      width: 100vw;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-    }
-    #container {
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
-      align-items: center;
-      height: 90vh;
-      width: 100vw;
-    }
-    #chat {
-      width: 100%;
-      max-width: 500px;
-      height: 70vh;
-      background: #fff;
-      padding: 15px;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px #ccc;
-      overflow-y: auto;
-      margin: 0 auto 10px auto;
-      display: flex;
-      flex-direction: column;
-    }
-    .msg {
-      padding: 8px 12px;
-      margin: 8px 0;
-      border-radius: 18px;
-      max-width: 80%;
-      word-break: break-word;
-      font-size: 1.1em;
-    }
-    .bot {
-      background: #e0f7fa;
-      color: #333;
-      text-align: left;
-      margin-right: auto;
-    }
-    .user {
-      background: #dcf8c6;
-      color: #333;
-      text-align: right;
-      margin-left: auto;
-    }
-    #input, #send {
-      padding: 14px;
-      border-radius: 8px;
-      border: 1px solid #ccc;
-      font-size: 1.1em;
-    }
-    #input {
-      width: 75%;
-      margin-right: 10px;
-    }
-    #send {
-      width: 20%;
-      background: #25d366;
-      color: #fff;
-      border: none;
-      cursor: pointer;
-      font-weight: bold;
-    }
-    #send:hover {
-      background: #128c7e;
-    }
-    #inputRow {
-      display: flex;
-      width: 100%;
-      max-width: 500px;
-      margin: 0 auto;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <title>Web Chat Bot</title>
 </head>
+
 <body>
-  <div id="container">
-    <div id="chat"></div>
-    <div id="inputRow">
-      <input id="input" placeholder="Escribe un mensaje..." autocomplete="off">
-      <button id="send">Enviar</button>
+    <div id="container">
+        <div id="chat"></div>
+        <div id="inputRow">
+            <textarea id="input" placeholder="Escribe un mensaje..." autocomplete="off"></textarea>
+            <button id="send"></button>
+        </div>
     </div>
-  </div>
-
-  <script>
-
-    const input = document.getElementById('input');
-    const sendBtn = document.getElementById('send');
-    async function sendMessage() {
-      const msg = input.value;
-      if (!msg) return;
-      addMessage(msg, 'user');
-      input.value = '';
-      try {
-        const res = await fetch('/webchat-api', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: msg })
-        });
-        const data = await res.json();
-        addMessage(data.reply, 'bot');
-      } catch (err) {
-        addMessage('Hubo un error procesando tu mensaje.', 'bot');
-      }
-    }
-
-    sendBtn.onclick = sendMessage;
-    input.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') {
-        sendMessage();
-      }
-    });
-
-    function addMessage(text, type) {
-      const div = document.createElement('div');
-      div.className = 'msg ' + type;
-      div.innerText = text;
-      document.getElementById('chat').appendChild(div);
-      document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
-    }
-  </script>
 </body>
+
+<!-- script file -->
+<script src="js/main.js"></script>
+
 </html>
