@@ -26,8 +26,8 @@ RUN pnpm install
 # Copiar el resto del código fuente y carpetas necesarias antes del build
 COPY src/ ./src/
 COPY assets/ ./assets/
-COPY js/ ./js/
-COPY style/ ./style/
+COPY src/js/ ./src/js/
+COPY src/style/ ./src/style/
 COPY src/utils/ ./src/utils/
 COPY src/utils-web/ ./src/utils-web/
 COPY temp/ ./temp/
@@ -72,8 +72,8 @@ COPY --from=builder /app/src/webchat.html ./src/webchat.html
 COPY --from=builder /app/README.md ./
 COPY --from=builder /app/nodemon.json ./
 COPY --from=builder /app/railway.json ./
-COPY --from=builder /app/js ./js
-COPY --from=builder /app/style ./style
+COPY --from=builder /app/src/js ./src/js
+COPY --from=builder /app/src/style ./src/style
 
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
