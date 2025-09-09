@@ -11,7 +11,6 @@
     { "key": "RESERVI_API_KEY", "name": "Clave API Reservi", "required": true },
     { "key": "PORT", "name": "Puerto", "required": false },
     { "key": "ID_GRUPO_RESUMEN", "name": "ID Grupo Resumen", "required": false },
-    { "key": "ID_GRUPO_WS", "name": "ID Grupo WS", "required": false },
     { "key": "SHEET_ID_RESUMEN", "name": "Sheet ID Resumen", "required": false },
     { "key": "SHEET_RESUMEN_RANGE", "name": "Sheet Resumen Range", "required": false },
     { "key": "timeOutCierre", "name": "Timeout Cierre", "required": false },

@@ -15,7 +15,7 @@ import { createReservation, checkAvailability } from "./utils/riservi";
 const PORT = process.env.PORT ?? "";
 /** ID del asistente de OpenAI */
 const ASSISTANT_ID = process.env.ASSISTANT_ID;
-const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_WS ?? "";
+const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_RESUMEN ?? "";
 
 const userQueues = new Map();
 const userLocks = new Map();

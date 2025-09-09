@@ -33,7 +33,7 @@ const webChatManager = new WebChatManager();
 const PORT = process.env.PORT ?? "";
 /** ID del asistente de OpenAI */
 const ASSISTANT_ID = process.env.ASSISTANT_ID;
-const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_WS ?? "";
+const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_RESUMEN ?? "";
 
 export const userQueues = new Map();
 export const userLocks = new Map();
