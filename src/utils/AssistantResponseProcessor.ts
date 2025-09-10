@@ -1,4 +1,18 @@
 // src/utils/AssistantResponseProcessor.ts
+// Ajustar fecha/hora a GMT-3 (hora argentina)
+function toArgentinaTime(fechaReservaStr: string): string {
+    const [fecha, hora] = fechaReservaStr.split(' ');
+    const [anio, mes, dia] = fecha.split('-').map(Number);
+    const [hh, min] = hora.split(':').map(Number);
+    const date = new Date(Date.UTC(anio, mes - 1, dia, hh, min));
+    date.setHours(date.getHours() - 3);
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const hhh = String(date.getHours()).padStart(2, '0');
+    const mmm = String(date.getMinutes()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd} ${hhh}:${mmm}`;
+}
 import { JsonBlockFinder } from "../Api-Riservi/JsonBlockFinder";
 import { checkAvailability, createReservation, updateReservationById, cancelReservationById } from "../Api-Riservi/riservi";
 import fs from 'fs';
@@ -9,6 +23,21 @@ function limpiarBloquesJSON(texto: string): string {
 }
 
 function corregirFechaAnioVigente(fechaReservaStr: string): string {
+function toArgentinaTime(fechaReservaStr: string): string {
+    // Recibe 'YYYY-MM-DD HH:mm' y ajusta a GMT-3
+    const [fecha, hora] = fechaReservaStr.split(' ');
+    const [anio, mes, dia] = fecha.split('-').map(Number);
+    const [hh, min] = hora.split(':').map(Number);
+    // Construir fecha en UTC y restar 3 horas
+    const date = new Date(Date.UTC(anio, mes - 1, dia, hh, min));
+    date.setHours(date.getHours() - 3);
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const hhh = String(date.getHours()).padStart(2, '0');
+    const mmm = String(date.getMinutes()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd} ${hhh}:${mmm}`;
+}
     const ahora = new Date();
     const vigente = ahora.getFullYear();
     const [fecha, hora] = fechaReservaStr.split(" ");
@@ -86,7 +115,8 @@ export class AssistantResponseProcessor {
             if (tipo === "#DISPONIBLE#") {
                 const fechaOriginal = jsonData.date;
                 const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
-                if (fechaOriginal !== fechaCorregida) jsonData.date = fechaCorregida;
+                const fechaArgentina = toArgentinaTime(fechaCorregida);
+                jsonData.date = fechaArgentina;
                 if (!esFechaFutura(jsonData.date)) {
                     try {
                         await flowDynamic([{ body: "La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida." }]);
@@ -197,7 +227,8 @@ export class AssistantResponseProcessor {
                 state.reservaEnCurso = true;
                 const fechaOriginal = jsonData.date;
                 const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
-                if (fechaOriginal !== fechaCorregida) jsonData.date = fechaCorregida;
+                const fechaArgentina = toArgentinaTime(fechaCorregida);
+                jsonData.date = fechaArgentina;
                 if (!esFechaFutura(jsonData.date)) {
                     state.reservaEnCurso = false;
                     try {
