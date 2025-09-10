@@ -1,6 +1,7 @@
 // ...existing imports y lógica del bot...
 
 import path from 'path';
+import serve from 'serve-static';
 import { Server } from 'socket.io';
 import fs from 'fs';
 import "dotenv/config";
@@ -197,7 +198,12 @@ const main = async () => {
                 httpInject(adapterProvider.server);
 
                 // Usar la instancia Polka (adapterProvider.server) para rutas
+
+// Servir archivos estáticos para js y style
                 const polkaApp = adapterProvider.server;
+polkaApp.use('/js', serve('src/js'));
+polkaApp.use('/style', serve('src/style'));
+
                 // Agregar ruta personalizada para el webchat
                 polkaApp.get('/webchat', (req, res) => {
                     res.sendFile(path.join(__dirname, '../webchat.html'));
