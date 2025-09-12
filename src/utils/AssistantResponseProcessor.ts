@@ -227,9 +227,8 @@ export class AssistantResponseProcessor {
                 }
                 state.reservaEnCurso = true;
                 const fechaOriginal = jsonData.date;
-                const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
-                const fechaArgentina = toArgentinaTime(fechaCorregida);
-                jsonData.date = fechaArgentina;
+                // Solo usar la fecha/hora corregida para contexto, no para la reserva
+                // jsonData.date debe mantener la hora original recibida del asistente
                 if (!esFechaFutura(jsonData.date)) {
                     state.reservaEnCurso = false;
                     try {
