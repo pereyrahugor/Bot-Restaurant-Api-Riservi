@@ -201,8 +201,8 @@ const main = async () => {
 
 // Servir archivos estáticos para js y style
                 const polkaApp = adapterProvider.server;
-polkaApp.use('/js', serve('src/js'));
-polkaApp.use('/style', serve('src/style'));
+                polkaApp.use("/js", serve("src/js"));
+                polkaApp.use("/style", serve("src/style"));
 
                 // Agregar ruta personalizada para el webchat
                 polkaApp.get('/webchat', (req, res) => {

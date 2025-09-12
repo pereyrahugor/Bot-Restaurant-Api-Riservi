@@ -114,9 +114,10 @@ export class AssistantResponseProcessor {
 
             if (tipo === "#DISPONIBLE#") {
                 const fechaOriginal = jsonData.date;
+                // Solo usar la fecha/hora corregida para contexto del asistente, no para la reserva
                 const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
                 const fechaArgentina = toArgentinaTime(fechaCorregida);
-                jsonData.date = fechaArgentina;
+                // NO modificar jsonData.date, mantener la hora original del usuario
                 if (!esFechaFutura(jsonData.date)) {
                     try {
                         await flowDynamic([{ body: "La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida." }]);
