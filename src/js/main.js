@@ -8,7 +8,7 @@ const headerBack = document.getElementById('backBtn')
 if (headerBack) {
     headerBack.addEventListener('click', () => {
         if (history.length > 1) history.back()
-        else window.location.href = 'https://robot.clientesneurolinks.com/' // ajustar URL
+        else window.location.href = 'https://asistentes.clientesneurolinks.com/' // ajustar URL
     })
 }
 
