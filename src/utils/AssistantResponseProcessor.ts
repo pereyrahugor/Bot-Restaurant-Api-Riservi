@@ -132,13 +132,20 @@ export class AssistantResponseProcessor {
                 console.log('[API Debug] Llamada a checkAvailability:', jsonData.date, jsonData.partySize);
                 const apiResponse = await checkAvailability(jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
                 console.log('[API Debug] Respuesta de checkAvailability:', apiResponse);
-                const logPath = 'd:/Dev/Bot-Restaurant-Api-Riservi/logs/checkAvailability_full_response.txt';
-                try {
-                    fs.appendFileSync(logPath, `\n--- Nueva respuesta ---\n${JSON.stringify(apiResponse, null, 2)}\n`);
-                } catch (err) {
-                    console.error('[Log Error] No se pudo guardar la respuesta completa en el archivo:', err);
-                }
-                console.log('[API Debug] Respuesta COMPLETA de checkAvailability guardada en logs/checkAvailability_full_response.txt');
+                    const tempPath = 'temp/checkAvailability_full_response.txt';
+                    try {
+                        fs.writeFileSync(tempPath, JSON.stringify(apiResponse, null, 2));
+                    } catch (err) {
+                        console.error('[Log Error] No se pudo guardar la respuesta completa en el archivo:', err);
+                    }
+                    // ...verificación o uso del archivo...
+                    // Eliminar el archivo después de la verificación
+                    try {
+                        fs.unlinkSync(tempPath);
+                    } catch (err) {
+                        // Si falla el borrado, solo loguear
+                        console.warn('[Log Warn] No se pudo eliminar el archivo temporal:', err);
+                    }
                     let disponibilidadExacta = false;
                     const horariosDisponibles: string[] = [];
                     if (apiResponse?.response?.response?.availability) {
