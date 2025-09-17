@@ -132,8 +132,12 @@ export class AssistantResponseProcessor {
                 console.log('[API Debug] Llamada a checkAvailability:', jsonData.date, jsonData.partySize);
                 const apiResponse = await checkAvailability(jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
                 console.log('[API Debug] Respuesta de checkAvailability:', apiResponse);
-                    const tempPath = 'temp/checkAvailability_full_response.txt';
+                    const tempDir = 'temp';
+                    const tempPath = tempDir + '/checkAvailability_full_response.txt';
                     try {
+                        if (!fs.existsSync(tempDir)) {
+                            fs.mkdirSync(tempDir, { recursive: true });
+                        }
                         fs.writeFileSync(tempPath, JSON.stringify(apiResponse, null, 2));
                     } catch (err) {
                         console.error('[Log Error] No se pudo guardar la respuesta completa en el archivo:', err);
