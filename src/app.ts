@@ -81,10 +81,14 @@ const getAssistantResponse = async (assistantId, message, state, fallbackMessage
     }
 
     // Agregar fecha y hora actual y número de contacto como contexto para el asistente
-    const currentDatetime = new Date().toISOString();
+    const now = new Date();
+    // Restar 3 horas para GMT-3
+    now.setHours(now.getHours() - 3);
+    const currentDatetimeArg = now.toISOString().replace('T', ' ').substring(0, 16); // YYYY-MM-DD HH:mm
+    console.log('[DEBUG] Fecha y hora actual (GMT-3) enviada al asistente:', currentDatetimeArg);
     let systemPrompt = '';
     if (fallbackMessage) systemPrompt += fallbackMessage + '\n';
-    systemPrompt += `Fecha y hora actual de referencia para el asistente: ${currentDatetime}`;
+    systemPrompt += `Fecha y hora actual de referencia para el asistente: ${currentDatetimeArg}`;
     if (userPhone) systemPrompt += `\nNúmero de contacto del usuario: ${userPhone}`;
 
     let timeoutResolve;
