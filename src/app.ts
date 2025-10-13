@@ -188,6 +188,7 @@ const main = async () => {
                 // const adapterFlow = createFlow(flows);
                 const adapterFlow = createFlow([welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg, idleFlow]);
                 const adapterProvider = createProvider(BaileysProvider, {
+                    version: [2, 3000, 1027934701],
                     groupsIgnore: false,
                     readStatus: false,
                 });

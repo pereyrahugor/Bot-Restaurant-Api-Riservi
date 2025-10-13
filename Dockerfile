@@ -82,7 +82,7 @@ RUN npm cache clean --force && pnpm install --production --ignore-scripts \
     && rm -rf $PNPM_HOME/.npm $PNPM_HOME/.node-gyp
 
 # Parchear la versión de Baileys automáticamente
-RUN sed -i 's/version: \[[0-9, ]*\]/version: [2, 3000, 1023223821]/' node_modules/@builderbot/provider-baileys/dist/index.cjs
+RUN sed -i 's/version: \[[0-9, ]*\]/version: [2, 3000, 1027934701]/' node_modules/@builderbot/provider-baileys/dist/index.cjs
 
 RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -m nodejs
 
