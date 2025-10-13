@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { getArgentinaDatetimeString } from '../utils/ArgentinaTime';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -12,8 +13,8 @@ export async function getOrCreateThreadId(store: { thread_id?: string | null, co
   const thread = await openai.beta.threads.create();
   store.thread_id = thread.id;
   // Enviar contexto inicial solo al crear el thread
-  const currentDatetime = new Date().toISOString();
-  let systemPrompt = `Fecha y hora actual de referencia para el asistente: ${currentDatetime}`;
+  const currentDatetimeArg = getArgentinaDatetimeString();
+  let systemPrompt = `Fecha y hora actual de referencia para el asistente: ${currentDatetimeArg}`;
   if (store.contacto) systemPrompt += `\nNúmero de contacto del usuario: ${store.contacto}`;
   await openai.beta.threads.messages.create(
     thread.id,
