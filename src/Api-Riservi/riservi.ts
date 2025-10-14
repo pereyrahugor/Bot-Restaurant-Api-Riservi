@@ -41,17 +41,13 @@ export const createReservation = async (reserva: any, apiKey?: string) => {
     let reservaMoment;
     let now;
     if (reserva.date) {
-        now = moment();
         reservaMoment = moment(reserva.date, [moment.ISO_8601, "YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm"]);
         // Si el año es menor al actual, lo corrige automáticamente al año vigente
-        const vigente = now.year();
+        const vigente = moment().year();
         if (reservaMoment.isValid() && reservaMoment.year() < vigente) {
             reservaMoment.year(vigente);
         }
-        // Si la fecha corregida sigue siendo anterior o igual a ahora, lanzar error
-        if (!reservaMoment.isValid() || reservaMoment.isSameOrBefore(now)) {
-            throw new Error("La fecha de la reserva debe ser posterior a la fecha y hora actual. Por favor, ingresa una fecha válida en el futuro.");
-        }
+        // Validación de fecha futura eliminada (ya validada en el asistente)
     }
     // Mapear los campos del bot/asistente al formato esperado por la API
     // Solo incluir campos con valor, y mover preferredArea a notes si es "No fumadores"
