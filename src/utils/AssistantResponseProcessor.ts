@@ -118,17 +118,7 @@ export class AssistantResponseProcessor {
                 const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
                 const fechaArgentina = toArgentinaTime(fechaCorregida);
                 // NO modificar jsonData.date, mantener la hora original del usuario
-                if (!esFechaFutura(jsonData.date)) {
-                    try {
-                        await flowDynamic([{ body: "La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida." }]);
-                        if (ctx && ctx.type !== 'webchat') {
-                            console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
-                        }
-                    } catch (err) {
-                        console.error('[WhatsApp Debug] Error en flowDynamic:', err);
-                    }
-                    return;
-                }
+                // Control de fecha futura eliminado (ya validado antes)
                 console.log('[API Debug] Llamada a checkAvailability:', jsonData.date, jsonData.partySize);
                 const apiResponse = await checkAvailability(jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
                 console.log('[API Debug] Respuesta de checkAvailability:', apiResponse);
@@ -240,18 +230,7 @@ export class AssistantResponseProcessor {
                 const fechaOriginal = jsonData.date;
                 // Solo usar la fecha/hora corregida para contexto, no para la reserva
                 // jsonData.date debe mantener la hora original recibida del asistente
-                if (!esFechaFutura(jsonData.date)) {
-                    state.reservaEnCurso = false;
-                    try {
-                        await flowDynamic([{ body: "La fecha debe ser igual o posterior a hoy. Por favor, elegí una fecha válida." }]);
-                        if (ctx && ctx.type !== 'webchat') {
-                            console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
-                        }
-                    } catch (err) {
-                        console.error('[WhatsApp Debug] Error en flowDynamic:', err);
-                    }
-                    return;
-                }
+                // Control de fecha futura eliminado (ya validado antes)
                 // Siempre llamar a la API antes de limpiar/enviar el texto
                 console.log('[Debug] RESERVA: Payload para createReservation:', JSON.stringify(jsonData));
                 console.log('[API Debug] Llamada a createReservation:', JSON.stringify(jsonData));
