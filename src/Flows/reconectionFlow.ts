@@ -1,7 +1,6 @@
 // Clase para manejar la lógica de reconexión cuando el campo nombre está vacío
 import { toAsk } from '@builderbot-plugins/openai-assistants';
-import { extraerDatosResumen } from '~/utils/extractJsonData';
-import { ResumenData } from '~/utils/googleSheetsResumen';
+import { extraerDatosResumen, GenericResumenData } from '~/utils/extractJsonData';
 
 // Opciones para configurar el flujo de reconexión
 interface ReconectionOptions {
@@ -10,7 +9,7 @@ interface ReconectionOptions {
     provider: any; // Proveedor de mensajería
     maxAttempts?: number; // Máximo de intentos de reconexión
     timeoutMs?: number; // Tiempo de espera entre intentos (ms)
-    onSuccess: (data: ResumenData) => Promise<void>; // Callback si se obtiene el nombre
+    onSuccess: (data: GenericResumenData) => Promise<void>; // Callback si se obtiene el nombre
     onFail: () => Promise<void>; // Callback si se alcanzan los intentos máximos
 }
 
@@ -22,7 +21,7 @@ export class ReconectionFlow {
     private readonly ctx: any; // Contexto del usuario
     private readonly state: any; // Estado de la conversación
     private readonly provider: any; // Proveedor de mensajería
-    private readonly onSuccess: (data: ResumenData) => Promise<void>; // Acción al obtener nombre
+    private readonly onSuccess: (data: GenericResumenData) => Promise<void>; // Acción al obtener nombre
     private readonly onFail: () => Promise<void>; // Acción al fallar todos los intentos
     private readonly ASSISTANT_ID = process.env.ASSISTANT_ID ?? '';
     private readonly msjSeguimiento1: string;
@@ -115,26 +114,30 @@ export class ReconectionFlow {
             // Espera el timeout o la respuesta del usuario, lo que ocurra primero
             const userResponded = await this.waitForUserResponse(jid, timeout);
             if (userResponded) {
-                // Limpiar el estado de reconexión al éxito
+                // Limpiar el estado de reconexión y delegar la navegación al callback onSuccess
                 if (this.state) delete this.state.reconectionFlow;
-                const resumen = await toAsk(this.ASSISTANT_ID, "GET_RESUMEN", this.state);
-                const data: ResumenData = extraerDatosResumen(resumen);
-                await this.onSuccess(data);
+                // Llama al callback onSuccess, que debe encargarse de la navegación
+                await this.onSuccess({});
                 return;
             }
 
             // Si no respondió, intentar obtener el resumen nuevamente desde el asistente
             const resumen = await toAsk(this.ASSISTANT_ID, "GET_RESUMEN", this.state);
-            const data: ResumenData = extraerDatosResumen(resumen);
-            const nombreInvalido = !data.nombre || data.nombre.trim() === "" ||
-                data.nombre.trim() === "- Nombre:" ||
-                data.nombre.trim() === "- Interés:" ||
-                data.nombre.trim() === "- Nombre de la Empresa:" ||
-                data.nombre.trim() === "- Cargo:";
-            if (!nombreInvalido) {
+            const data: GenericResumenData = extraerDatosResumen(resumen);
+            const tipo = data.tipo || "SI_RESUMEN";
+            if (tipo === "SI_RESUMEN") {
                 if (this.state) delete this.state.reconectionFlow;
                 await this.onSuccess(data);
                 return;
+            } else if (tipo === "NO_REPORTAR_BAJA") {
+                if (this.state) delete this.state.reconectionFlow;
+                // No hacer nada más, terminar el ciclo
+                await this.onFail();
+                return;
+            } else if (tipo === "NO_REPORTAR_SEGUIR") {
+                // No relanzar idleFlow ni nueva instancia, continuar el ciclo en esta misma instancia
+                // Simplemente continuar el while para el siguiente intento de seguimiento
+                continue;
             }
         }
         // Limpiar el estado de reconexión al fallar

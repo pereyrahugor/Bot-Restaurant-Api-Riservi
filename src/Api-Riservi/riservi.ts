@@ -75,7 +75,11 @@ export const createReservation = async (reserva: any, apiKey?: string) => {
    // if (typeof reserva.sendEmailToDiner === 'boolean') payload.sendEmailToDiner = reserva.sendEmailToDiner;
     if (reserva.promoCode) payload.promoCode = reserva.promoCode;
     if (reserva.eventTypeId) payload.eventTypeId = reserva.eventTypeId;
-    if (reserva.eventSourceId) payload.eventSourceId = reserva.eventSourceId;
+    if (typeof reserva.eventSourceId !== 'undefined' && reserva.eventSourceId !== null) {
+        payload.eventSourceId = reserva.eventSourceId;
+    } else {
+        payload.eventSourceId = 12;
+    }
     if (reserva.tags) payload.tags = reserva.tags;
     // Copiar todos los campos adicionales de la variante sugerida (por ejemplo, shift, slotId, turno, etc.)
     // Esto asegura que si la variante sugerida tiene campos especiales, se envíen igual a la reserva
