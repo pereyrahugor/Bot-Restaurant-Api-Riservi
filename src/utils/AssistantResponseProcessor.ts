@@ -120,46 +120,62 @@ export class AssistantResponseProcessor {
                 // NO modificar jsonData.date, mantener la hora original del usuario
                 // Control de fecha futura eliminado (ya validado antes)
                 console.log('[API Debug] Llamada a checkAvailability:', jsonData.date, jsonData.partySize);
-                const apiResponse = await checkAvailability(jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
-                console.log('[API Debug] Respuesta de checkAvailability:', apiResponse);
-                    const tempDir = 'temp';
-                    const tempPath = tempDir + '/checkAvailability_full_response.txt';
-                    try {
-                        if (!fs.existsSync(tempDir)) {
-                            fs.mkdirSync(tempDir, { recursive: true });
-                        }
-                        fs.writeFileSync(tempPath, JSON.stringify(apiResponse, null, 2));
-                    } catch (err) {
-                        console.error('[Log Error] No se pudo guardar la respuesta completa en el archivo:', err);
-                    }
-                    // ...verificación o uso del archivo...
-                    // Eliminar el archivo después de la verificación
-                    try {
-                        fs.unlinkSync(tempPath);
-                    } catch (err) {
-                        // Si falla el borrado, solo loguear
-                        console.warn('[Log Warn] No se pudo eliminar el archivo temporal:', err);
-                    }
-                    let disponibilidadExacta = false;
-                    const horariosDisponibles: string[] = [];
-                    if (apiResponse?.response?.response?.availability) {
-                        console.log('[Disponibilidad] response.response.availability:', JSON.stringify(apiResponse.response.response.availability, null, 2));
-                        const queryTime = moment(jsonData.date, ["YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", moment.ISO_8601]).format("YYYY-MM-DD HH:mm");
-                        for (const slot of apiResponse.response.response.availability) {
-                            const slotTime = moment(slot.time, ["YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", moment.ISO_8601]).format("YYYY-MM-DD HH:mm");
-                            console.log(`[Disponibilidad] Slot: time=${slotTime}, available=${slot.available}`);
-                            // Verifica fecha y disponibilidad usando el dato enviado a la API
-                            if (slotTime === queryTime && slot.available) {
-                                disponibilidadExacta = true;
-                                console.log(`[Disponibilidad] Hora exacta encontrada: ${slotTime} disponible para reservar para partySize=${jsonData.partySize}.`);
-                            } else if (slotTime === queryTime && !slot.available) {
-                                console.log(`[Disponibilidad] Hora exacta encontrada: ${slotTime} NO disponible para reservar.`);
-                            }
-                            if (slot.available) {
-                                horariosDisponibles.push(slotTime);
-                            }
+                let apiResponse;
+                try {
+                    apiResponse = await checkAvailability(jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
+                    console.log('[API Debug] Respuesta de checkAvailability:', apiResponse);
+                } catch (error) {
+                    console.error('[API Error] Error en checkAvailability:', error);
+                    // Notificar al asistente para que pueda decidir reintentar
+                    const errorMsg = 'No se pudo obtener respuesta de la API de disponibilidad. ¿Deseas volver a intentar la consulta?';
+                    const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, errorMsg, state, undefined, ctx.from, ctx.from);
+                    if (assistantApiResponse) {
+                        try {
+                            await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
+                        } catch (err) {
+                            console.error('[WhatsApp Debug] Error en flowDynamic:', err);
                         }
                     }
+                    return;
+                }
+                const tempDir = 'temp';
+                const tempPath = tempDir + '/checkAvailability_full_response.txt';
+                try {
+                    if (!fs.existsSync(tempDir)) {
+                        fs.mkdirSync(tempDir, { recursive: true });
+                    }
+                    fs.writeFileSync(tempPath, JSON.stringify(apiResponse, null, 2));
+                } catch (err) {
+                    console.error('[Log Error] No se pudo guardar la respuesta completa en el archivo:', err);
+                }
+                // ...verificación o uso del archivo...
+                // Eliminar el archivo después de la verificación
+                try {
+                    fs.unlinkSync(tempPath);
+                } catch (err) {
+                    // Si falla el borrado, solo loguear
+                    console.warn('[Log Warn] No se pudo eliminar el archivo temporal:', err);
+                }
+                let disponibilidadExacta = false;
+                const horariosDisponibles: string[] = [];
+                if (apiResponse?.response?.response?.availability) {
+                    console.log('[Disponibilidad] response.response.availability:', JSON.stringify(apiResponse.response.response.availability, null, 2));
+                    const queryTime = moment(jsonData.date, ["YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", moment.ISO_8601]).format("YYYY-MM-DD HH:mm");
+                    for (const slot of apiResponse.response.response.availability) {
+                        const slotTime = moment(slot.time, ["YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", moment.ISO_8601]).format("YYYY-MM-DD HH:mm");
+                        console.log(`[Disponibilidad] Slot: time=${slotTime}, available=${slot.available}`);
+                        // Verifica fecha y disponibilidad usando el dato enviado a la API
+                        if (slotTime === queryTime && slot.available) {
+                            disponibilidadExacta = true;
+                            console.log(`[Disponibilidad] Hora exacta encontrada: ${slotTime} disponible para reservar para partySize=${jsonData.partySize}.`);
+                        } else if (slotTime === queryTime && !slot.available) {
+                            console.log(`[Disponibilidad] Hora exacta encontrada: ${slotTime} NO disponible para reservar.`);
+                        }
+                        if (slot.available) {
+                            horariosDisponibles.push(slotTime);
+                        }
+                    }
+                }
                 // Nunca enviar la respuesta cruda de la API al usuario
                 if (disponibilidadExacta) {
                     // Hay disponibilidad exacta para la fecha/hora solicitada
@@ -247,6 +263,18 @@ export class AssistantResponseProcessor {
                 } catch (err) {
                     apiError = err?.message || String(err);
                     console.error('[Debug] RESERVA: Error en createReservation:', err);
+                    // Notificar al asistente para que pueda decidir reintentar
+                    const errorMsg = `No se pudo obtener respuesta de la API de reserva. ¿Deseas volver a intentar la solicitud?\nDetalle: ${apiError}`;
+                    const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, errorMsg, state, undefined, ctx.from, ctx.from);
+                    if (assistantApiResponse) {
+                        try {
+                            await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
+                        } catch (err) {
+                            console.error('[WhatsApp Debug] Error en flowDynamic:', err);
+                        }
+                    }
+                    state.reservaEnCurso = false;
+                    return;
                 }
                 // Si hay error, enviar al usuario y no reintentar
                 if (apiError) {
