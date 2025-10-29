@@ -102,7 +102,8 @@ export const createReservation = async (reserva: any, apiKey?: string) => {
                 headers: {
                     Authorization: `Bearer ${keyToUse}`,
                     "Content-Type": "application/json"
-                }
+                },
+                timeout: 120000 // 120 segundos
             }
         );
         // Único log: respuesta de la API
@@ -115,6 +116,9 @@ export const createReservation = async (reserva: any, apiKey?: string) => {
         }
         return { ...data, reservaId };
     } catch (error) {
+        if (error.code === 'ECONNABORTED') {
+            return { error: 'timeout' };
+        }
         if (error.response) {
             return error.response.data; // <-- Devolver el error de la API para que el bot lo pueda mostrar/analizar
         } else {
