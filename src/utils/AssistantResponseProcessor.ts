@@ -18,6 +18,10 @@ import { checkAvailability, createReservation, updateReservationById, cancelRese
 import fs from 'fs';
 import moment from 'moment';
 
+// Mapa global para bloquear usuarios de WhatsApp durante operaciones API
+const userApiBlockMap = new Map();
+const API_BLOCK_TIMEOUT_MS = 20000; // 20 segundos
+
 function limpiarBloquesJSON(texto: string): string {
     return texto.replace(/\[API\][\s\S]*?\[\/API\]/g, "");
 }
@@ -57,7 +61,7 @@ export class AssistantResponseProcessor {
     static async analizarYProcesarRespuestaAsistente(
         response: any,
         ctx: any,
-        flowDynamic: any,
+                                                                                                                                                                                         flowDynamic: any,
         state: any,
         provider: any,
         gotoFlow: any,
@@ -69,6 +73,11 @@ export class AssistantResponseProcessor {
             console.log('[Webchat Debug] Mensaje entrante del asistente:', response);
         } else {
             console.log('[WhatsApp Debug] Mensaje entrante del asistente:', response);
+            // Si el usuario está bloqueado por una operación API, evitar procesar nuevos mensajes
+            if (userApiBlockMap.has(ctx.from)) {
+                console.log(`[API Block] Mensaje ignorado de usuario bloqueado: ${ctx.from}`);
+                return;
+            }
         }
         let jsonData: any = null;
         const textResponse = typeof response === "string" ? response : String(response || "");
@@ -106,6 +115,19 @@ export class AssistantResponseProcessor {
 
         // 3) Procesar JSON si existe
         if (jsonData && typeof jsonData.type === "string") {
+            // Si es WhatsApp, bloquear usuario por 20 segundos o hasta finalizar la operación API
+            let unblockUser = null;
+            if (ctx && ctx.type !== 'webchat' && ctx.from) {
+                userApiBlockMap.set(ctx.from, true);
+                // Desbloqueo automático tras timeout de seguridad
+                const timeoutId = setTimeout(() => {
+                    userApiBlockMap.delete(ctx.from);
+                }, API_BLOCK_TIMEOUT_MS);
+                unblockUser = () => {
+                    clearTimeout(timeoutId);
+                    userApiBlockMap.delete(ctx.from);
+                };
+            }
             // Log para detectar canal y datos antes de enviar
             if (ctx && ctx.type !== 'webchat') {
                 console.log('[WhatsApp Debug] Antes de enviar con flowDynamic:', jsonData, ctx.from);
@@ -136,6 +158,7 @@ export class AssistantResponseProcessor {
                             console.error('[WhatsApp Debug] Error en flowDynamic:', err);
                         }
                     }
+                    if (unblockUser) unblockUser();
                     return;
                 }
                 const tempDir = 'temp';
@@ -274,19 +297,18 @@ export class AssistantResponseProcessor {
                         }
                     }
                     state.reservaEnCurso = false;
+                    if (unblockUser) unblockUser();
                     return;
                 }
                 // Si hay error, enviar al usuario y no reintentar
                 if (apiError) {
                     try {
                         await flowDynamic([{ body: `No se pudo crear la reserva: ${apiError}` }]);
-                        if (ctx && ctx.type !== 'webchat') {
-                            console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
-                        }
                     } catch (err) {
                         console.error('[WhatsApp Debug] Error en flowDynamic:', err);
                     }
                     state.reservaEnCurso = false;
+                    if (unblockUser) unblockUser();
                     return;
                 }
                 // Enviar la respuesta de la API al asistente, no directamente al usuario
@@ -305,12 +327,17 @@ export class AssistantResponseProcessor {
                     }
                 }
                 state.reservaEnCurso = false;
+                if (unblockUser) unblockUser();
                 return;
             }
 
             if (tipo === "#MODIFICAR#") {
-                console.log('[API Debug] Llamada a updateReservationById:', jsonData.id, jsonData.date, jsonData.partySize);
-                const apiResponse = await updateReservationById(jsonData.id, jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
+                let apiResponse;
+                try {
+                    apiResponse = await updateReservationById(jsonData.id, jsonData.date, jsonData.partySize, process.env.RESERVI_API_KEY);
+                } finally {
+                    if (unblockUser) unblockUser();
+                }
                 console.log('[API Debug] Respuesta de updateReservationById:', apiResponse);
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) {
@@ -327,8 +354,12 @@ export class AssistantResponseProcessor {
             }
 
             if (tipo === "#CANCELAR#") {
-                console.log('[API Debug] Llamada a cancelReservationById:', jsonData.id);
-                const apiResponse = await cancelReservationById(jsonData.id, process.env.RESERVI_API_KEY);
+                let apiResponse;
+                try {
+                    apiResponse = await cancelReservationById(jsonData.id, process.env.RESERVI_API_KEY);
+                } finally {
+                    if (unblockUser) unblockUser();
+                }
                 console.log('[API Debug] Respuesta de cancelReservationById:', apiResponse);
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) {
