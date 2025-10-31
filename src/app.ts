@@ -271,24 +271,25 @@ const main = async () => {
   // Endpoint para reiniciar el bot vía Railway
   polkaApp.post("/api/restart-bot", async (req, res) => {
   console.log('POST /api/restart-bot recibido');
-    try {
-      const result = await restartRailwayDeployment();
+  try {
+    const result = await restartRailwayDeployment();
     console.log('Resultado de restartRailwayDeployment:', result);
-      if (result.success) {
-        res.json({
-          success: true,
-          message: "Reinicio solicitado correctamente.",
-        });
-      } else {
-        res
-          .status(500)
-          .json({ success: false, error: result.error || "Error desconocido" });
-      }
-    } catch (err: any) {
-    console.error('Error en /api/restart-bot:', err);
-      res.status(500).json({ success: false, error: err.message });
+    if (result.success) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        message: "Reinicio solicitado correctamente."
+      }));
+    } else {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: result.error || "Error desconocido" }));
     }
-  });
+  } catch (err: any) {
+    console.error('Error en /api/restart-bot:', err);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: err.message }));
+  }
+});
   // Integrar Socket.IO para webchat
   // Obtener el servidor HTTP real de BuilderBot después de httpInject
   const realHttpServer = adapterProvider.server.server;
