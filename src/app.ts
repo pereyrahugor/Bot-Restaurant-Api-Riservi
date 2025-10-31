@@ -32,7 +32,7 @@ import {
 } from "./Api-Riservi/riservi";
 import { AssistantResponseProcessor } from "./utils/AssistantResponseProcessor";
 import { getArgentinaDatetimeString } from "./utils/ArgentinaTime";
-import { restartRailwayDeployment } from "./Api-RailWay/Railway";
+import { RailwayApi } from "./Api-RailWay/Railway";
 
 // Definir __dirname para ES modules
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -272,7 +272,7 @@ const main = async () => {
   polkaApp.post("/api/restart-bot", async (req, res) => {
   console.log('POST /api/restart-bot recibido');
   try {
-    const result = await restartRailwayDeployment();
+    const result = await RailwayApi.restartActiveDeployment();
     console.log('Resultado de restartRailwayDeployment:', result);
     if (result.success) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
