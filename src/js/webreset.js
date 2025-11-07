@@ -27,7 +27,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       console.log('Body de respuesta:', data);
       if (data.success) {
-        alert('Reinicio solicitado correctamente.');
+        // Mostrar mensaje y contador regresivo en la página
+        let countdown = 45;
+        const msgDiv = document.createElement('div');
+        msgDiv.style.textAlign = 'center';
+        msgDiv.style.marginTop = '2rem';
+        msgDiv.innerHTML = `<strong>Reinicio solicitado correctamente.<br>En breve será redireccionado.<br>Redirigiendo en <span id="countdown">${countdown}</span> segundos...</strong>`;
+        document.body.appendChild(msgDiv);
+        const interval = setInterval(() => {
+          countdown--;
+          document.getElementById('countdown').textContent = countdown;
+          if (countdown <= 0) {
+            clearInterval(interval);
+            window.location.href = "/";
+          }
+        }, 1000);
       } else {
         alert('Error al solicitar reinicio: ' + (data.error || 'Error desconocido'));
       }
