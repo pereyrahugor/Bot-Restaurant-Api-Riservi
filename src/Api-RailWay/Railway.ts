@@ -2,11 +2,14 @@ import "dotenv/config";
 
 const RAILWAY_GRAPHQL_ENDPOINT = 'https://backboard.railway.com/graphql/v2';
 const RAILWAY_GRAPHQL_ENDPOINT_APP = 'https://backboard.railway.app/graphql/v2';
-const projectRailWayId = process.env.projectRailWayId;
-const projectRailWayToken = process.env.RAILWAY_TOKEN;
+const RAILWAY_PROJECT_ID = process.env.RAILWAY_PROJECT_ID;
+const RAILWAY_ENVIRONMENT_ID = process.env.RAILWAY_ENVIRONMENT_ID
+;
+const RAILWAY_SERVICE_ID = process.env.RAILWAY_SERVICE_ID;
+const RAILWAY_TOKEN = process.env.RAILWAY_TOKEN;
 
-if (!projectRailWayId || !projectRailWayToken) {
-  throw new Error('Faltan variables de entorno projectRailWayId o projectRailWayToken');
+if (!RAILWAY_PROJECT_ID || !RAILWAY_ENVIRONMENT_ID || !RAILWAY_SERVICE_ID || !RAILWAY_TOKEN) {
+  throw new Error('Faltan variables de entorno RAILWAY_PROJECT_ID, RAILWAY_ENVIRONMENT_ID, RAILWAY_SERVICE_ID o RAILWAY_TOKEN');
 }
 
 interface DeploymentNode {
@@ -24,38 +27,45 @@ interface DeploymentResponse {
 }
 
 export class RailwayApi {
-  static async getActiveDeploymentId(projectId: string, projectToken: string): Promise<string | null> {
+  static async getActiveDeploymentId(): Promise<string | null> {
     const query = `
-      query getDeployments($projectId: String!) {
-        deployments(projectId: $projectId) {
+      query deployments($projectId: String!, $environmentId: String!, $serviceId: String!) {
+        deployments(
+          first: 1
+          input: {
+            projectId: "$projectId"
+            environmentId: "$environmentId"
+            serviceId: "$serviceId"
+          }
+        ) {
           edges {
             node {
               id
-              status
-              createdAt
+              staticUrl
             }
           }
         }
       }
     `;
+    const variables = {
+      projectId: RAILWAY_PROJECT_ID,
+      environmentId: RAILWAY_ENVIRONMENT_ID,
+      serviceId: RAILWAY_SERVICE_ID
+    };
     const res = await fetch(RAILWAY_GRAPHQL_ENDPOINT_APP, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Project-Access-Token': projectToken,
+        'Authorization': `Bearer ${RAILWAY_TOKEN}`,
       },
-      body: JSON.stringify({ query, variables: { projectId } }),
+      body: JSON.stringify({ query, variables }),
     });
     const data: any = await res.json();
-    if (!data?.data?.deployments?.edges) {
+    if (!data?.data?.deployments?.edges?.length) {
       console.error('Respuesta inesperada de Railway API:', JSON.stringify(data, null, 2));
       return null;
     }
-    const deployments = data.data.deployments.edges.map((e: any) => e.node);
-    const active = deployments
-      .filter((d: any) => d.status === 'SUCCESS')
-      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-    return active?.id || null;
+    return data.data.deployments.edges[0].node.id;
   }
 
   /**
@@ -63,19 +73,22 @@ export class RailwayApi {
    * @returns {Promise<{success: boolean, error?: string}>}
    */
   static async restartActiveDeployment(): Promise<{ success: boolean; error?: string }> {
-    const deploymentId = await RailwayApi.getActiveDeploymentId(projectRailWayId, projectRailWayToken);
+    // Usar el deploymentId obtenido dinámicamente
+    const deploymentId = await RailwayApi.getActiveDeploymentId();
     if (!deploymentId) {
       return { success: false, error: 'No se encontró deployment activo para el proyecto.' };
     }
+    console.log('[RailwayApi] Usando deploymentId dinámico:', deploymentId);
     const mutation = {
-      query: `mutation deploymentRestart { deploymentRestart(id: "${deploymentId}") }`
+      query: `mutation deploymentRestart($id: String!) { deploymentRestart(id: $id) }`,
+      variables: { id: deploymentId }
     };
     try {
       const res = await fetch(RAILWAY_GRAPHQL_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Project-Access-Token': projectRailWayToken
+          'Authorization': `Bearer ${RAILWAY_TOKEN}`
         },
         body: JSON.stringify(mutation)
       });
