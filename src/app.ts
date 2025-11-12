@@ -11,7 +11,7 @@ import {
   EVENTS,
 } from "@builderbot/bot";
 import { MemoryDB } from "@builderbot/bot";
-import { BaileysProvider } from "@builderbot/provider-baileys";
+import { BaileysProvider } from "builderbot-provider-sherpa";
 import { toAsk, httpInject } from "@builderbot-plugins/openai-assistants";
 import { typing } from "./utils/presence";
 import { idleFlow } from "./Flows/idleFlow";
@@ -237,7 +237,7 @@ const main = async () => {
     idleFlow,
   ]);
   const adapterProvider = createProvider(BaileysProvider, {
-    version: [2, 3000, 1027934701],
+    version: [2, 3000, 1033834674],
     groupsIgnore: false,
     readStatus: false,
   });
