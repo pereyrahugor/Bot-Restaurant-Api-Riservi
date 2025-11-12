@@ -44,8 +44,8 @@ RUN apt-get remove -y python3 make g++ git && apt-get autoremove -y && rm -rf /v
 
 FROM node:20-slim AS deploy
 
-# Instalar poppler-utils y git en la imagen final para que pdftoppm y dependencias git-hosted estén disponibles
-RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils git && rm -rf /var/lib/apt/lists/*
+# Instalar poppler-utils, git y openssh-client en la imagen final para dependencias git-hosted por SSH
+RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils git openssh-client && rm -rf /var/lib/apt/lists/*
 
 
 WORKDIR /app
