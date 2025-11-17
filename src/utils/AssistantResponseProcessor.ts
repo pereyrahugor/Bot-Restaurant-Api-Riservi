@@ -20,7 +20,7 @@ import moment from 'moment';
 
 // Mapa global para bloquear usuarios de WhatsApp durante operaciones API
 const userApiBlockMap = new Map();
-const API_BLOCK_TIMEOUT_MS = 20000; // 20 segundos
+const API_BLOCK_TIMEOUT_MS = 5000; // 5 segundos
 
 function limpiarBloquesJSON(texto: string): string {
     return texto.replace(/\[API\][\s\S]*?\[\/API\]/g, "");
@@ -202,8 +202,11 @@ export class AssistantResponseProcessor {
                 // Nunca enviar la respuesta cruda de la API al usuario
                 if (disponibilidadExacta) {
                     // Hay disponibilidad exacta para la fecha/hora solicitada
-                    const pedirDatos = `Por favor, completa los datos restantes para la reserva del ${jsonData.date} para ${jsonData.partySize} personas (nombre, teléfono, email, etc).`;
-                    const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, pedirDatos, state, undefined, ctx.from, ctx.from);
+                    const pedirDatos = `Por favor, confirme los datos restantes de fecha y hora y datos faltantes.`;
+                    // Enviar pedirDatos SOLO al asistente, no al usuario, y marcarlo como mensaje del backend
+                    const backendMsg = { text: pedirDatos, fromBackend: true };
+                    const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, backendMsg, state, undefined, ctx.from, ctx.from);
+                    // No enviar pedirDatos al usuario, solo procesar la respuesta del asistente si existe
                     if (assistantApiResponse) {
                         try {
                             await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
@@ -339,7 +342,8 @@ export class AssistantResponseProcessor {
                     if (unblockUser) unblockUser();
                 }
                 console.log('[API Debug] Respuesta de updateReservationById:', apiResponse);
-                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
+                const backendMsg = { text: typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), fromBackend: true };
+                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, backendMsg, state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) {
                     try {
                         await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
@@ -361,7 +365,8 @@ export class AssistantResponseProcessor {
                     if (unblockUser) unblockUser();
                 }
                 console.log('[API Debug] Respuesta de cancelReservationById:', apiResponse);
-                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
+                const backendMsg = { text: typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), fromBackend: true };
+                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, backendMsg, state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) {
                     try {
                         await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
