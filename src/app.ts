@@ -21,15 +21,7 @@ import { welcomeFlowImg } from "./Flows/welcomeFlowImg";
 import { ErrorReporter } from "./utils/errorReporter";
 import { AssistantBridge } from "./utils-web/AssistantBridge";
 import { WebChatManager } from "./utils-web/WebChatManager";
-import { WebChatSession } from "./utils-web/WebChatSession";
 import { fileURLToPath } from "url";
-import { JsonBlockFinder } from "./Api-Riservi/JsonBlockFinder";
-import {
-  checkAvailability,
-  createReservation,
-  updateReservationById,
-  cancelReservationById,
-} from "./Api-Riservi/riservi";
 import { AssistantResponseProcessor } from "./utils/AssistantResponseProcessor";
 import { getArgentinaDatetimeString } from "./utils/ArgentinaTime";
 import { RailwayApi } from "./Api-RailWay/Railway";
@@ -237,7 +229,7 @@ const main = async () => {
     idleFlow,
   ]);
   const adapterProvider = createProvider(BaileysProvider, {
-    version: [2, 3000, 1033834674],
+    version: [2, 3000, 1030817285],
     groupsIgnore: false,
     readStatus: false,
   });
