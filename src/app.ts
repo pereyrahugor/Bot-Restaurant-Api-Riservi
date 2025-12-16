@@ -2,6 +2,7 @@ import path from "path";
 import serve from "serve-static";
 import { Server } from "socket.io";
 import fs from "fs";
+import bodyParser from 'body-parser';
 import "dotenv/config";
 import {
   createBot,
@@ -12,8 +13,10 @@ import {
 } from "@builderbot/bot";
 import { MemoryDB } from "@builderbot/bot";
 import { BaileysProvider } from "builderbot-provider-sherpa";
+import { restoreSessionFromDb, startSessionSync, deleteSessionFromDb } from "./utils/sessionSync";
 import { toAsk, httpInject } from "@builderbot-plugins/openai-assistants";
 import { typing } from "./utils/presence";
+import QRCode from 'qrcode';
 import { idleFlow } from "./Flows/idleFlow";
 import { welcomeFlowTxt } from "./Flows/welcomeFlowTxt";
 import { welcomeFlowVoice } from "./Flows/welcomeFlowVoice";
@@ -41,6 +44,19 @@ const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_RESUMEN ?? "";
 
 export const userQueues = new Map();
 export const userLocks = new Map();
+
+// Función auxiliar para verificar si existe sesión activa
+const hasActiveSession = () => {
+    try {
+        const sessionsDir = path.join(process.cwd(), 'bot_sessions');
+        if (!fs.existsSync(sessionsDir)) return false;
+        const files = fs.readdirSync(sessionsDir);
+        return files.length > 0;
+    } catch (error) {
+        console.error('Error verificando sesión:', error);
+        return false;
+    }
+};
 
 const adapterProvider = createProvider(BaileysProvider, {
   groupsIgnore: false,
@@ -216,6 +232,20 @@ export const handleQueue = async (userId) => {
 
 // Main function to initialize the bot and load Google Sheets data
 const main = async () => {
+  // Restaurar sesión de WhatsApp desde Supabase si existe (ANTES de crear el provider)
+  await restoreSessionFromDb();
+
+  // Limpiar QR antiguo al inicio
+  const qrPath = path.join(process.cwd(), 'bot.qr.png');
+  if (fs.existsSync(qrPath)) {
+      try {
+          fs.unlinkSync(qrPath);
+          console.log('🗑️ [Init] QR antiguo eliminado.');
+      } catch (e) {
+          console.error('⚠️ [Init] No se pudo eliminar QR antiguo:', e);
+      }
+  }
+
   // ...existing code...
   // const flows = [welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg];
   // if (process.env.resumenOn === "on") {
@@ -233,12 +263,207 @@ const main = async () => {
     groupsIgnore: false,
     readStatus: false,
   });
+
+  // Listener para generar el archivo QR manualmente cuando se solicite
+  adapterProvider.on('require_action', async (payload: any) => {
+      console.log('⚡ [Provider] require_action received. Payload:', payload);
+      
+      // Intentar extraer el string del QR de varias formas posibles
+      let qrString = null;
+      
+      if (typeof payload === 'string') {
+          qrString = payload;
+      } else if (payload && typeof payload === 'object') {
+          if (payload.qr) qrString = payload.qr;
+          else if (payload.code) qrString = payload.code;
+      }
+
+      if (qrString && typeof qrString === 'string') {
+          console.log('⚡ [Provider] QR Code detected (length: ' + qrString.length + '). Generating image...');
+          try {
+              const qrPath = path.join(process.cwd(), 'bot.qr.png');
+              await QRCode.toFile(qrPath, qrString, {
+                  color: {
+                      dark: '#000000',
+                      light: '#ffffff'
+                  },
+                  scale: 4,
+                  margin: 2
+              });
+              console.log(`✅ [Provider] QR Image saved to ${qrPath}`);
+          } catch (err) {
+              console.error('❌ [Provider] Error generating QR image:', err);
+          }
+      } else {
+          console.log('⚠️ [Provider] require_action received but could not extract QR string.');
+      }
+  });
+
   const adapterDB = new MemoryDB();
   const { httpServer } = await createBot({
     flow: adapterFlow,
     provider: adapterProvider,
     database: adapterDB,
   });
+  
+  // Iniciar sincronización periódica de sesión hacia Supabase
+  startSessionSync();
+
+  const app = adapterProvider.server;
+
+  // Middleware de logging
+  app.use((req, res, next) => {
+      console.log(`[REQUEST] ${req.method} ${req.url}`);
+      next();
+  });
+
+  // Middleware para parsear JSON
+  app.use(bodyParser.json());
+
+  // Servir archivos estáticos
+  app.use("/js", serve("src/js"));
+  app.use("/style", serve("src/style"));
+  app.use("/assets", serve("src/assets"));
+
+  // Endpoint para servir la imagen del QR
+  app.get('/qr.png', (req, res) => {
+      const qrPath = path.join(process.cwd(), 'bot.qr.png');
+      // Desactivar caché para asegurar que siempre se vea el QR nuevo
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
+      if (fs.existsSync(qrPath)) {
+          res.setHeader('Content-Type', 'image/png');
+          fs.createReadStream(qrPath).pipe(res);
+      } else {
+          // Si no hay QR, devolver 404 pero loguearlo
+          console.log('[DEBUG] Solicitud de QR fallida: Archivo no encontrado en', qrPath);
+          res.status(404).send('QR no encontrado');
+      }
+  });
+
+  // Dashboard principal con estado y opciones de control
+  app.get('/', (req, res) => {
+      console.log('[DEBUG] Handling root request');
+      try {
+          const sessionExists = hasActiveSession();
+          res.statusCode = 200;
+          res.end(`
+              <html>
+                  <head>
+                      <title>Bot Dashboard</title>
+                      <meta name="viewport" content="width=device-width, initial-scale=1">
+                      <style>
+                          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; background: #f0f2f5; color: #333; }
+                          .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+                          h1 { margin-top: 0; color: #1a1a1a; font-size: 24px; }
+                          h2 { font-size: 18px; color: #444; margin-bottom: 10px; }
+                          .btn { display: inline-block; padding: 12px 24px; background: #008069; color: white; text-decoration: none; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+                          .btn:hover { background: #006d59; }
+                          .btn-danger { background: #dc3545; }
+                          .btn-danger:hover { background: #c82333; }
+                          .status { font-weight: bold; color: ${sessionExists ? '#008069' : '#d9534f'}; }
+                          .qr-container { text-align: center; margin: 20px 0; }
+                          img.qr { max-width: 280px; border: 1px solid #eee; border-radius: 8px; }
+                          .info-text { color: #666; font-size: 14px; line-height: 1.5; }
+                      </style>
+                      ${!sessionExists ? '<meta http-equiv="refresh" content="5">' : ''}
+                  </head>
+                  <body>
+                      <div class="card">
+                          <h1>🤖 Estado del Bot</h1>
+                          <p>Estado de Sesión: <span class="status">${sessionExists ? '✅ Activa (Archivos encontrados)' : '⏳ Esperando Escaneo'}</span></p>
+                          
+                          ${!sessionExists ? `
+                              <div class="qr-container">
+                                  <h3>Escanea el código QR con WhatsApp</h3>
+                                  <img src="/qr.png" class="qr" alt="Cargando QR..." onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+                                  <p style="display:none; color:orange;">Generando QR... por favor espera.</p>
+                                  <p class="info-text">La página se actualizará automáticamente cuando aparezca el QR.</p>
+                              </div>
+                          ` : `
+                              <p class="info-text">El bot ha detectado archivos de sesión. Si WhatsApp no responde, usa la opción de reinicio abajo.</p>
+                          `}
+                      </div>
+
+                      <div class="card">
+                          <h2>💬 WebChat</h2>
+                          <p class="info-text">Accede a la interfaz de chat web para pruebas o soporte.</p>
+                          <a href="/webchat" class="btn">Abrir WebChat</a>
+                      </div>
+
+                      <div class="card" style="border-left: 5px solid #dc3545;">
+                          <h2>⚠️ Zona de Peligro</h2>
+                          <p class="info-text">Si el bot no responde en WhatsApp, elimina la sesión para generar un nuevo QR.</p>
+                          <form action="/api/reset-session" method="POST" onsubmit="return confirm('¿Estás seguro? Esto desconectará WhatsApp, borrará la sesión actual y reiniciará el bot.');">
+                              <button type="submit" class="btn btn-danger">🗑️ Borrar Sesión y Reiniciar</button>
+                          </form>
+                      </div>
+                  </body>
+              </html>
+          `);
+      } catch (e) {
+          console.error('[ERROR] Root handler failed:', e);
+          res.statusCode = 500;
+          res.end('Internal Server Error');
+      }
+  });
+
+  // Endpoint para borrar sesión y reiniciar
+  app.post('/api/reset-session', async (req, res) => {
+      try {
+          const sessionsDir = path.join(process.cwd(), 'bot_sessions');
+          console.log('[RESET] Solicitud de eliminación de sesión recibida.');
+          
+          // 1. Eliminar sesión local
+          if (fs.existsSync(sessionsDir)) {
+              console.log('[RESET] Eliminando directorio local:', sessionsDir);
+              fs.rmSync(sessionsDir, { recursive: true, force: true });
+          } else {
+              console.log('[RESET] El directorio local no existía.');
+          }
+
+          // 1.1 Eliminar QR antiguo
+          const qrPath = path.join(process.cwd(), 'bot.qr.png');
+          if (fs.existsSync(qrPath)) {
+              fs.unlinkSync(qrPath);
+              console.log('[RESET] QR antiguo eliminado.');
+          }
+
+          // 2. Eliminar sesión remota (Supabase)
+          await deleteSessionFromDb();
+
+          // Respuesta adaptativa (JSON para fetch, HTML para form)
+          if (req.headers['content-type'] === 'application/json') {
+              res.end(JSON.stringify({ success: true, message: "Sesión eliminada. Reiniciando..." }));
+          } else {
+              res.end(`
+                  <html>
+                      <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+                          <h1 style="color: green;">✅ Sesión Eliminada (Local y Remota)</h1>
+                          <p>El bot se está reiniciando. Por favor espera unos 60 segundos y recarga la página principal para escanear el nuevo QR.</p>
+                          <script>
+                              setTimeout(() => { window.location.href = "/"; }, 45000);
+                          </script>
+                      </body>
+                  </html>
+              `);
+          }
+          
+          // Forzar salida del proceso para que Railway/Docker lo reinicie
+          console.log('[RESET] Saliendo del proceso para reiniciar...');
+          setTimeout(() => {
+              process.exit(0);
+          }, 1000);
+
+      } catch (e) {
+          console.error('[RESET] Error:', e);
+          res.statusCode = 500;
+          res.end('Error al reiniciar sesión');
+      }
+  });
+
   httpInject(adapterProvider.server);
 
   // Usar la instancia Polka (adapterProvider.server) para rutas
