@@ -26,21 +26,9 @@ const API_BLOCK_TIMEOUT_MS = 1000; // 5 segundos
 
 // --- NUEVA LÓGICA DE COLAS POR ENDPOINT ---
 // Definir colas para cada endpoint
-const checkAvailabilityQueue = new ApiQueue(
-    (args: { date: string; partySize: number; apiKey: string }) =>
-        checkAvailability(args.date, args.partySize, args.apiKey)
-);
 const createReservationQueue = new ApiQueue(
     (args: { data: any; apiKey: string }) =>
         createReservation(args.data, args.apiKey)
-);
-const updateReservationQueue = new ApiQueue(
-    (args: { id: string; date: string; partySize: number; apiKey: string }) =>
-        updateReservationById(args.id, args.date, args.partySize, args.apiKey)
-);
-const cancelReservationQueue = new ApiQueue(
-    (args: { id: string; apiKey: string }) =>
-        cancelReservationById(args.id, args.apiKey)
 );
 
 function limpiarBloquesJSON(texto: string): string {
@@ -165,13 +153,12 @@ export class AssistantResponseProcessor {
                 console.log('[API Debug] Llamada a checkAvailability:', jsonData.date, jsonData.partySize);
                 let apiResponse;
                 try {
-                    // Usar la cola para checkAvailability
-                    const result = await checkAvailabilityQueue.enqueue({
-                        date: jsonData.date,
-                        partySize: jsonData.partySize,
-                        apiKey: process.env.RESERVI_API_KEY
-                    }, ctx.from || "");
-                    apiResponse = result.response;
+                    // Llamada directa a checkAvailability
+                    apiResponse = await checkAvailability(
+                        jsonData.date,
+                        jsonData.partySize,
+                        process.env.RESERVI_API_KEY
+                    );
                     console.log('[API Debug] Respuesta de checkAvailability:', apiResponse);
                 } catch (error) {
                     console.error('[API Error] Error en checkAvailability:', error);
@@ -367,14 +354,13 @@ export class AssistantResponseProcessor {
             if (tipo === "#MODIFICAR#") {
                 let apiResponse;
                 try {
-                    // Usar la cola para updateReservationById
-                    const result = await updateReservationQueue.enqueue({
-                        id: jsonData.id,
-                        date: jsonData.date,
-                        partySize: jsonData.partySize,
-                        apiKey: process.env.RESERVI_API_KEY
-                    }, ctx.from || "");
-                    apiResponse = result.response;
+                    // Llamada directa a updateReservationById
+                    apiResponse = await updateReservationById(
+                        jsonData.id,
+                        jsonData.date,
+                        jsonData.partySize,
+                        process.env.RESERVI_API_KEY
+                    );
                 } finally {
                     if (unblockUser) unblockUser();
                 }
@@ -396,12 +382,11 @@ export class AssistantResponseProcessor {
             if (tipo === "#CANCELAR#") {
                 let apiResponse;
                 try {
-                    // Usar la cola para cancelReservationById
-                    const result = await cancelReservationQueue.enqueue({
-                        id: jsonData.id,
-                        apiKey: process.env.RESERVI_API_KEY
-                    }, ctx.from || "");
-                    apiResponse = result.response;
+                    // Llamada directa a cancelReservationById
+                    apiResponse = await cancelReservationById(
+                        jsonData.id,
+                        process.env.RESERVI_API_KEY
+                    );
                 } finally {
                     if (unblockUser) unblockUser();
                 }
