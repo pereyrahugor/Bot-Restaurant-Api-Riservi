@@ -10,5 +10,7 @@ export function getArgentinaDatetimeString(): string {
     const dd = String(gmt3.getUTCDate()).padStart(2, '0');
     const hh = String(gmt3.getUTCHours()).padStart(2, '0');
     const min = String(gmt3.getUTCMinutes()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+    const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    const diaSemana = dias[gmt3.getUTCDay()];
+    return `${yyyy}-${mm}-${dd} ${hh}:${min} (${diaSemana})`;
 }

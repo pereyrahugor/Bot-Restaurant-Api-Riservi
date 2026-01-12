@@ -122,7 +122,7 @@ const getAssistantResponse = async (
   );
   let systemPrompt = "";
   if (fallbackMessage) systemPrompt += fallbackMessage + "\n";
-  systemPrompt += `Fecha y hora actual de referencia para el asistente: ${currentDatetimeArg}`;
+  systemPrompt += `Fecha, hora y día de la semana de referencia para el asistente: ${currentDatetimeArg}`;
   if (userPhone)
     systemPrompt += `\nNúmero de contacto del usuario: ${userPhone}`;
 
