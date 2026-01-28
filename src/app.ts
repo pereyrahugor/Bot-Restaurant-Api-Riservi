@@ -436,12 +436,17 @@ const main = async () => {
     }
   }
 
-  // Endpoint Webhook para YCloud (Definido antes de httpInject por seguridad)
-  app.post('/webhook', (req, res) => {
+  // Endpoint Webhook para YCloud (Múltiples variantes para asegurar match en Polka)
+  const webhookHandler = (req, res) => {
     console.log('[DEBUG] Petición recibida en /webhook');
     // @ts-ignore
     adapterProvider.handleWebhook(req, res);
-  });
+  };
+
+  app.post('/webhook', webhookHandler);
+  app.post('//webhook', webhookHandler);
+  app.all('/webhook', webhookHandler);
+  app.all('//webhook', webhookHandler);
 
   httpInject(adapterProvider.server);
 
