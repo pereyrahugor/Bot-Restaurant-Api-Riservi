@@ -49,15 +49,26 @@ class YCloudProvider extends ProviderClass {
     public async sendMessage(number: string, message: string, options: any = {}): Promise<any> {
         // Asegurarse de tener la API Key
         const apiKey = process.env.YCLOUD_API_KEY;
+        const fromNumber = process.env.YCLOUD_WABA_NUMBER;
+
         if (!apiKey) {
             console.error('[YCloudProvider] Error: YCLOUD_API_KEY no definida en variables de entorno.');
             return;
         }
 
+        if (!fromNumber) {
+            console.error('[YCloudProvider] Error: YCLOUD_WABA_NUMBER no definida en variables de entorno. Es necesaria para el parámetro "from".');
+            return;
+        }
+
         const url = 'https://api.ycloud.com/v2/whatsapp/messages';
 
+        // Limpiar el número de destino (quitar +, espacios, etc)
+        const cleanNumber = number.replace(/\D/g, '');
+
         const body: any = {
-            to: number,
+            from: fromNumber.replace(/\D/g, ''), // El número desde el cual enviamos (tu WABA number)
+            to: cleanNumber,
             type: 'text',
             text: { body: message }
         };
@@ -76,7 +87,7 @@ class YCloudProvider extends ProviderClass {
             });
             return response.data;
         } catch (error: any) {
-            console.error('[YCloudProvider] Error enviando mensaje:', error?.response?.data || error.message);
+            console.error('[YCloudProvider] Error enviando mensaje:', JSON.stringify(error?.response?.data || error.message, null, 2));
             return Promise.resolve(null);
         }
     }
