@@ -42,20 +42,51 @@ const PORT = process.env.PORT ?? "";
 const ASSISTANT_ID = process.env.ASSISTANT_ID;
 const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_RESUMEN ?? "";
 
+// Estado global para encender/apagar el bot
+let botEnabled = true;
+
 export const userQueues = new Map();
 export const userLocks = new Map();
 
-// Función auxiliar para verificar si existe sesión activa
-const hasActiveSession = () => {
-    try {
-        const sessionsDir = path.join(process.cwd(), 'bot_sessions');
-        if (!fs.existsSync(sessionsDir)) return false;
-        const files = fs.readdirSync(sessionsDir);
-        return files.length > 0;
-    } catch (error) {
-        console.error('Error verificando sesión:', error);
-        return false;
+// Función auxiliar para verificar si existe sesión activa (Local o Remota)
+const hasActiveSession = async () => {
+  try {
+    // 1. Verificar si el proveedor está realmente conectado
+    // En builderbot-provider-sherpa (Baileys), el socket suele estar en vendor
+    // @ts-ignore
+    const isReady = !!(adapterProvider?.vendor?.user || adapterProvider?.globalVendorArgs?.sock?.user);
+
+    // 2. Verificar localmente
+    const sessionsDir = path.join(process.cwd(), 'bot_sessions');
+    let localActive = false;
+    if (fs.existsSync(sessionsDir)) {
+      const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
+      // creds.json es el archivo crítico para Baileys
+      localActive = files.includes('creds.json');
     }
+
+    // Si está conectado, es la prioridad máxima
+    if (isReady) return { active: true, source: 'connected' };
+
+    // Si tiene creds.json, es muy probable que se conecte pronto
+    if (localActive) return { active: true, source: 'local' };
+
+    // 3. Si no hay nada local, verificar en DB
+    // @ts-ignore
+    const remoteActive = await import("./utils/sessionSync").then(m => m.isSessionInDb());
+    if (remoteActive) {
+      return {
+        active: false,
+        hasRemote: true,
+        message: 'Sesión encontrada en la nube. El bot está intentando restaurarla. Si el QR aparece, puedes escanearlo para generar una nueva.'
+      };
+    }
+
+    return { active: false, hasRemote: false };
+  } catch (error) {
+    console.error('Error verificando sesión:', error);
+    return { active: false, error: error instanceof Error ? error.message : String(error) };
+  }
 };
 
 const adapterProvider = createProvider(BaileysProvider, {
@@ -165,6 +196,36 @@ export const processUserMessage = async (
 ) => {
   await typing(ctx, provider);
   try {
+    const body = ctx.body && ctx.body.trim();
+
+    // Comando para encender el bot
+    if (body === "#ON#") {
+      if (!botEnabled) {
+        botEnabled = true;
+        await flowDynamic([{ body: "🤖 Bot activado." }]);
+      } else {
+        await flowDynamic([{ body: "🤖 El bot ya está activado." }]);
+      }
+      return state;
+    }
+
+    // Comando para apagar el bot
+    if (body === "#OFF#") {
+      if (botEnabled) {
+        botEnabled = false;
+        await flowDynamic([{ body: "🛑 Bot desactivado. No responderé a más mensajes hasta recibir #ON#." }]);
+      } else {
+        await flowDynamic([{ body: "🛑 El bot ya está desactivado." }]);
+      }
+      return state;
+    }
+
+    // Si el bot está apagado, ignorar todo excepto #ON#
+    if (!botEnabled) {
+      return;
+    }
+
+
     const response = await getAssistantResponse(
       ASSISTANT_ID,
       ctx.body,
@@ -238,12 +299,12 @@ const main = async () => {
   // Limpiar QR antiguo al inicio
   const qrPath = path.join(process.cwd(), 'bot.qr.png');
   if (fs.existsSync(qrPath)) {
-      try {
-          fs.unlinkSync(qrPath);
-          console.log('🗑️ [Init] QR antiguo eliminado.');
-      } catch (e) {
-          console.error('⚠️ [Init] No se pudo eliminar QR antiguo:', e);
-      }
+    try {
+      fs.unlinkSync(qrPath);
+      console.log('🗑️ [Init] QR antiguo eliminado.');
+    } catch (e) {
+      console.error('⚠️ [Init] No se pudo eliminar QR antiguo:', e);
+    }
   }
 
   // ...existing code...
@@ -266,37 +327,37 @@ const main = async () => {
 
   // Listener para generar el archivo QR manualmente cuando se solicite
   adapterProvider.on('require_action', async (payload: any) => {
-      console.log('⚡ [Provider] require_action received. Payload:', payload);
-      
-      // Intentar extraer el string del QR de varias formas posibles
-      let qrString = null;
-      
-      if (typeof payload === 'string') {
-          qrString = payload;
-      } else if (payload && typeof payload === 'object') {
-          if (payload.qr) qrString = payload.qr;
-          else if (payload.code) qrString = payload.code;
-      }
+    console.log('⚡ [Provider] require_action received. Payload:', payload);
 
-      if (qrString && typeof qrString === 'string') {
-          console.log('⚡ [Provider] QR Code detected (length: ' + qrString.length + '). Generating image...');
-          try {
-              const qrPath = path.join(process.cwd(), 'bot.qr.png');
-              await QRCode.toFile(qrPath, qrString, {
-                  color: {
-                      dark: '#000000',
-                      light: '#ffffff'
-                  },
-                  scale: 4,
-                  margin: 2
-              });
-              console.log(`✅ [Provider] QR Image saved to ${qrPath}`);
-          } catch (err) {
-              console.error('❌ [Provider] Error generating QR image:', err);
-          }
-      } else {
-          console.log('⚠️ [Provider] require_action received but could not extract QR string.');
+    // Intentar extraer el string del QR de varias formas posibles
+    let qrString = null;
+
+    if (typeof payload === 'string') {
+      qrString = payload;
+    } else if (payload && typeof payload === 'object') {
+      if (payload.qr) qrString = payload.qr;
+      else if (payload.code) qrString = payload.code;
+    }
+
+    if (qrString && typeof qrString === 'string') {
+      console.log('⚡ [Provider] QR Code detected (length: ' + qrString.length + '). Generating image...');
+      try {
+        const qrPath = path.join(process.cwd(), 'bot.qr.png');
+        await QRCode.toFile(qrPath, qrString, {
+          color: {
+            dark: '#000000',
+            light: '#ffffff'
+          },
+          scale: 4,
+          margin: 2
+        });
+        console.log(`✅ [Provider] QR Image saved to ${qrPath}`);
+      } catch (err) {
+        console.error('❌ [Provider] Error generating QR image:', err);
       }
+    } else {
+      console.log('⚠️ [Provider] require_action received but could not extract QR string.');
+    }
   });
 
   const adapterDB = new MemoryDB();
@@ -305,7 +366,7 @@ const main = async () => {
     provider: adapterProvider,
     database: adapterDB,
   });
-  
+
   // Iniciar sincronización periódica de sesión hacia Supabase
   startSessionSync();
 
@@ -313,218 +374,258 @@ const main = async () => {
 
   // Middleware de logging
   app.use((req, res, next) => {
-      console.log(`[REQUEST] ${req.method} ${req.url}`);
-      next();
+    console.log(`[REQUEST] ${req.method} ${req.url}`);
+    next();
   });
 
   // Middleware para parsear JSON
   app.use(bodyParser.json());
 
-  // Servir archivos estáticos
-  app.use("/js", serve("src/js"));
-  app.use("/style", serve("src/style"));
-  app.use("/assets", serve("src/assets"));
-
-  // Endpoint para servir la imagen del QR
-  app.get('/qr.png', (req, res) => {
-      const qrPath = path.join(process.cwd(), 'bot.qr.png');
-      // Desactivar caché para asegurar que siempre se vea el QR nuevo
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-
-      if (fs.existsSync(qrPath)) {
-          res.setHeader('Content-Type', 'image/png');
-          fs.createReadStream(qrPath).pipe(res);
+  // 1. Middleware de compatibilidad (res.json, res.send, res.sendFile, etc)
+  app.use((req, res, next) => {
+    // @ts-ignore
+    res.status = (code) => { res.statusCode = code; return res; };
+    // @ts-ignore
+    res.send = (body) => {
+      if (res.headersSent) return res;
+      if (typeof body === 'object') {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(body || null));
       } else {
-          // Si no hay QR, devolver 404 pero loguearlo
-          console.log('[DEBUG] Solicitud de QR fallida: Archivo no encontrado en', qrPath);
-          res.status(404).send('QR no encontrado');
+        res.end(body || '');
       }
-  });
-
-  // Dashboard principal con estado y opciones de control
-  app.get('/', (req, res) => {
-      console.log('[DEBUG] Handling root request');
+      return res;
+    };
+    // @ts-ignore
+    res.json = (data) => {
+      if (res.headersSent) return res;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(data || null));
+      return res;
+    };
+    // @ts-ignore
+    res.sendFile = (filepath) => {
+      if (res.headersSent) return;
       try {
-          const sessionExists = hasActiveSession();
-          res.statusCode = 200;
-          res.end(`
-              <html>
-                  <head>
-                      <title>Bot Dashboard</title>
-                      <meta name="viewport" content="width=device-width, initial-scale=1">
-                      <style>
-                          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; background: #f0f2f5; color: #333; }
-                          .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
-                          h1 { margin-top: 0; color: #1a1a1a; font-size: 24px; }
-                          h2 { font-size: 18px; color: #444; margin-bottom: 10px; }
-                          .btn { display: inline-block; padding: 12px 24px; background: #008069; color: white; text-decoration: none; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; transition: background 0.2s; }
-                          .btn:hover { background: #006d59; }
-                          .btn-danger { background: #dc3545; }
-                          .btn-danger:hover { background: #c82333; }
-                          .status { font-weight: bold; color: ${sessionExists ? '#008069' : '#d9534f'}; }
-                          .qr-container { text-align: center; margin: 20px 0; }
-                          img.qr { max-width: 280px; border: 1px solid #eee; border-radius: 8px; }
-                          .info-text { color: #666; font-size: 14px; line-height: 1.5; }
-                      </style>
-                      ${!sessionExists ? '<meta http-equiv="refresh" content="5">' : ''}
-                  </head>
-                  <body>
-                      <div class="card">
-                          <h1>🤖 Estado del Bot</h1>
-                          <p>Estado de Sesión: <span class="status">${sessionExists ? '✅ Activa (Archivos encontrados)' : '⏳ Esperando Escaneo'}</span></p>
-                          
-                          ${!sessionExists ? `
-                              <div class="qr-container">
-                                  <h3>Escanea el código QR con WhatsApp</h3>
-                                  <img src="/qr.png" class="qr" alt="Cargando QR..." onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
-                                  <p style="display:none; color:orange;">Generando QR... por favor espera.</p>
-                                  <p class="info-text">La página se actualizará automáticamente cuando aparezca el QR.</p>
-                              </div>
-                          ` : `
-                              <p class="info-text">El bot ha detectado archivos de sesión. Si WhatsApp no responde, usa la opción de reinicio abajo.</p>
-                          `}
-                      </div>
-
-                      <div class="card">
-                          <h2>💬 WebChat</h2>
-                          <p class="info-text">Accede a la interfaz de chat web para pruebas o soporte.</p>
-                          <a href="/webchat" class="btn">Abrir WebChat</a>
-                      </div>
-
-                      <div class="card" style="border-left: 5px solid #dc3545;">
-                          <h2>⚠️ Zona de Peligro</h2>
-                          <p class="info-text">Si el bot no responde en WhatsApp, elimina la sesión para generar un nuevo QR.</p>
-                          <form action="/api/reset-session" method="POST" onsubmit="return confirm('¿Estás seguro? Esto desconectará WhatsApp, borrará la sesión actual y reiniciará el bot.');">
-                              <button type="submit" class="btn btn-danger">🗑️ Borrar Sesión y Reiniciar</button>
-                          </form>
-                      </div>
-                  </body>
-              </html>
-          `);
+        if (fs.existsSync(filepath)) {
+          const ext = path.extname(filepath).toLowerCase();
+          const mimeTypes = {
+            '.html': 'text/html',
+            '.js': 'application/javascript',
+            '.css': 'text/css',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.svg': 'image/svg+xml',
+            '.json': 'application/json'
+          };
+          res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+          fs.createReadStream(filepath)
+            .on('error', (err) => {
+              console.error(`[ERROR] Stream error in sendFile (${filepath}):`, err);
+              if (!res.headersSent) {
+                res.statusCode = 500;
+                res.end('Internal Server Error');
+              }
+            })
+            .pipe(res);
+        } else {
+          console.error(`[ERROR] sendFile: File not found: ${filepath}`);
+          res.statusCode = 404;
+          res.end('Not Found');
+        }
       } catch (e) {
-          console.error('[ERROR] Root handler failed:', e);
+        console.error(`[ERROR] Error in sendFile (${filepath}):`, e);
+        if (!res.headersSent) {
           res.statusCode = 500;
-          res.end('Internal Server Error');
+          res.end('Internal Error');
+        }
       }
+    };
+    next();
   });
 
-  // Endpoint para borrar sesión y reiniciar
-  app.post('/api/reset-session', async (req, res) => {
+  // 2. Redirect Middleware
+  app.use((req, res, next) => {
+    try {
+      if (req.url === "/" || req.url === "") {
+        console.log('[DEBUG] Redirigiendo raíz (/) a /dashboard via middleware');
+        res.writeHead(302, { 'Location': '/dashboard' });
+        return res.end();
+      }
+      next();
+    } catch (err) {
+      console.error('❌ [ERROR] Crash en cadena de middleware:', err);
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.end('Internal Server Error');
+      }
+    }
+  });
+
+  // 3. Función para servir páginas HTML
+  function serveHtmlPage(route, filename) {
+    const handler = (req, res) => {
+      console.log(`[DEBUG] Serving HTML for ${req.url} -> ${filename}`);
       try {
-          const sessionsDir = path.join(process.cwd(), 'bot_sessions');
-          console.log('[RESET] Solicitud de eliminación de sesión recibida.');
-          
-          // 1. Eliminar sesión local
-          if (fs.existsSync(sessionsDir)) {
-              console.log('[RESET] Eliminando directorio local:', sessionsDir);
-              fs.rmSync(sessionsDir, { recursive: true, force: true });
-          } else {
-              console.log('[RESET] El directorio local no existía.');
+        const possiblePaths = [
+          path.join(process.cwd(), 'src', 'html', filename),
+          path.join(process.cwd(), filename),
+          path.join(process.cwd(), 'src', filename),
+          path.join(__dirname, 'html', filename),
+          path.join(__dirname, filename),
+          path.join(__dirname, '..', 'src', 'html', filename)
+        ];
+
+        let htmlPath = null;
+        for (const p of possiblePaths) {
+          if (fs.existsSync(p) && fs.lstatSync(p).isFile()) {
+            htmlPath = p;
+            break;
           }
+        }
 
-          // 1.1 Eliminar QR antiguo
-          const qrPath = path.join(process.cwd(), 'bot.qr.png');
-          if (fs.existsSync(qrPath)) {
-              fs.unlinkSync(qrPath);
-              console.log('[RESET] QR antiguo eliminado.');
-          }
-
-          // 2. Eliminar sesión remota (Supabase)
-          await deleteSessionFromDb();
-
-          // Respuesta adaptativa (JSON para fetch, HTML para form)
-          if (req.headers['content-type'] === 'application/json') {
-              res.end(JSON.stringify({ success: true, message: "Sesión eliminada. Reiniciando..." }));
-          } else {
-              res.end(`
-                  <html>
-                      <body style="font-family: sans-serif; text-align: center; padding: 50px;">
-                          <h1 style="color: green;">✅ Sesión Eliminada (Local y Remota)</h1>
-                          <p>El bot se está reiniciando. Por favor espera unos 60 segundos y recarga la página principal para escanear el nuevo QR.</p>
-                          <script>
-                              setTimeout(() => { window.location.href = "/"; }, 45000);
-                          </script>
-                      </body>
-                  </html>
-              `);
-          }
-          
-          // Forzar salida del proceso para que Railway/Docker lo reinicie
-          console.log('[RESET] Saliendo del proceso para reiniciar...');
-          setTimeout(() => {
-              process.exit(0);
-          }, 1000);
-
-      } catch (e) {
-          console.error('[RESET] Error:', e);
-          res.statusCode = 500;
-          res.end('Error al reiniciar sesión');
+        if (htmlPath) {
+          // @ts-ignore
+          res.sendFile(htmlPath);
+        } else {
+          console.error(`[ERROR] File not found: ${filename}`);
+          // @ts-ignore
+          res.status(404).send('HTML no encontrado en el servidor');
+        }
+      } catch (err) {
+        console.error(`[ERROR] Failed to serve ${filename}:`, err);
+        // @ts-ignore
+        res.status(500).send('Error interno al servir HTML');
       }
-  });
+    };
+    app.get(route, handler);
+    if (route !== "/") {
+      app.get(route + '/', handler);
+    }
+  }
 
   httpInject(adapterProvider.server);
 
-  // Usar la instancia Polka (adapterProvider.server) para rutas
-
-  // Servir archivos estáticos para js y style
-  const polkaApp = adapterProvider.server;
-  polkaApp.use("/js", serve("src/js"));
-  polkaApp.use("/style", serve("src/style"));
-  polkaApp.use("/assets", serve("src/assets"));
- 
-  // Utilidad para servir páginas HTML estáticas
-  function serveHtmlPage(route, filename) {
-    polkaApp.get(route, (req, res) => {
-      res.setHeader("Content-Type", "text/html");
-      // Buscar primero en src/ (local), luego en /app/src/ (deploy)
-      let htmlPath = path.join(__dirname, filename);
-      if (!fs.existsSync(htmlPath)) {
-        // Buscar en /app/src/ (deploy)
-        htmlPath = path.join(process.cwd(), "src", filename);
-      }
-      try {
-        res.end(fs.readFileSync(htmlPath));
-      } catch (err) {
-        res.statusCode = 404;
-        res.end("HTML no encontrado");
-      }
-    });
-  }
-
   // Registrar páginas HTML
+  serveHtmlPage("/dashboard", "dashboard.html");
   serveHtmlPage("/webchat", "webchat.html");
   serveHtmlPage("/webreset", "webreset.html");
-  // Endpoint para reiniciar el bot vía Railway
-  polkaApp.post("/api/restart-bot", async (req, res) => {
-    console.log("POST /api/restart-bot recibido");
-    try {
-      const result = await RailwayApi.restartActiveDeployment();
-      console.log("Resultado de restartRailwayDeployment:", result);
-      if (result.success) {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            success: true,
-            message: "Reinicio solicitado correctamente.",
-          })
-        );
-      } else {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            success: false,
-            error: result.error || "Error desconocido",
-          })
-        );
-      }
-    } catch (err: any) {
-      console.error("Error en /api/restart-bot:", err);
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ success: false, error: err.message }));
+  serveHtmlPage("/variables", "variables.html");
+
+  // Servir archivos estáticos
+  app.use("/js", serve(path.join(process.cwd(), "src", "js")));
+  app.use("/style", serve(path.join(process.cwd(), "src", "style")));
+  app.use("/assets", serve(path.join(process.cwd(), "src", "assets")));
+
+  // Servir el código QR
+  app.get("/qr.png", (req, res) => {
+    const qrPath = path.join(process.cwd(), 'bot.qr.png');
+    if (fs.existsSync(qrPath)) {
+      res.setHeader('Content-Type', 'image/png');
+      fs.createReadStream(qrPath).pipe(res);
+    } else {
+      res.statusCode = 404;
+      res.end('QR not found');
     }
   });
+
+  // API Endpoints
+  app.get('/api/assistant-name', (req, res) => {
+    const assistantName = process.env.ASSISTANT_NAME || 'Asistente demo';
+    // @ts-ignore
+    res.json({ name: assistantName });
+  });
+
+  app.get('/api/dashboard-status', async (req, res) => {
+    const status = await hasActiveSession();
+    // @ts-ignore
+    res.json(status);
+  });
+
+  app.post('/api/delete-session', async (req, res) => {
+    try {
+      await deleteSessionFromDb();
+      // @ts-ignore
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Error en /api/delete-session:', err);
+      // @ts-ignore
+      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/api/restart-bot", async (req, res) => {
+    console.log('POST /api/restart-bot recibido');
+    try {
+      const result = await RailwayApi.restartActiveDeployment();
+      if (result.success) {
+        // @ts-ignore
+        res.json({ success: true, message: "Reinicio solicitado correctamente." });
+      } else {
+        // @ts-ignore
+        res.status(500).json({ success: false, error: result.error || "Error desconocido" });
+      }
+    } catch (err: any) {
+      console.error('Error en /api/restart-bot:', err);
+      // @ts-ignore
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/variables", async (req, res) => {
+    try {
+      const variables = await RailwayApi.getVariables();
+      if (variables) {
+        // @ts-ignore
+        res.json({ success: true, variables });
+      } else {
+        // @ts-ignore
+        res.status(500).json({ success: false, error: "No se pudieron obtener las variables de Railway" });
+      }
+    } catch (err: any) {
+      console.error('Error en GET /api/variables:', err);
+      // @ts-ignore
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/update-variables", async (req, res) => {
+    try {
+      // @ts-ignore
+      const { variables } = req.body;
+      if (!variables || typeof variables !== 'object') {
+        // @ts-ignore
+        return res.status(400).json({ success: false, error: "Variables no proporcionadas o formato inválido" });
+      }
+
+      console.log("[API] Actualizando variables en Railway...");
+      const updateResult = await RailwayApi.updateVariables(variables);
+
+      if (!updateResult.success) {
+        // @ts-ignore
+        return res.status(500).json({ success: false, error: updateResult.error });
+      }
+
+      console.log("[API] Variables actualizadas. Solicitando reinicio...");
+      const restartResult = await RailwayApi.restartActiveDeployment();
+
+      if (restartResult.success) {
+        // @ts-ignore
+        res.json({ success: true, message: "Variables actualizadas y reinicio solicitado." });
+      } else {
+        // @ts-ignore
+        res.json({ success: true, message: "Variables actualizadas, pero falló el reinicio automático.", warning: restartResult.error });
+      }
+    } catch (err: any) {
+      console.error('Error en POST /api/update-variables:', err);
+      // @ts-ignore
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+
+
   // Integrar Socket.IO para webchat
   // Obtener el servidor HTTP real de BuilderBot después de httpInject
   const realHttpServer = adapterProvider.server.server;
@@ -572,7 +673,7 @@ const main = async () => {
           },
         };
         const provider = undefined;
-        const gotoFlow = () => {};
+        const gotoFlow = () => { };
         let replyText = "";
         const flowDynamic = async (arr) => {
           if (Array.isArray(arr)) {
@@ -620,9 +721,9 @@ const main = async () => {
 
   // Integrar AssistantBridge si es necesario
   const assistantBridge = new AssistantBridge();
-  assistantBridge.setupWebChat(polkaApp, realHttpServer);
+  assistantBridge.setupWebChat(app, realHttpServer);
 
-  polkaApp.post("/webchat-api", async (req, res) => {
+  app.post("/webchat-api", async (req, res) => {
     console.log("Llamada a /webchat-api"); // log para debug
     // Si el body ya está disponible (por ejemplo, con body-parser), úsalo directamente
     if (req.body && req.body.message) {
@@ -693,7 +794,7 @@ const main = async () => {
             flowDynamic,
             session,
             undefined,
-            () => {},
+            () => { },
             async (...args) => {
               apiCalled = true;
               return await sendMessageToThread(threadId, args[1], ASSISTANT_ID);
@@ -773,7 +874,7 @@ const main = async () => {
             },
           };
           const provider = undefined;
-          const gotoFlow = () => {};
+          const gotoFlow = () => { };
           let replyText = "";
           const flowDynamic = async (arr) => {
             if (Array.isArray(arr)) {

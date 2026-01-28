@@ -73,6 +73,7 @@ COPY --from=builder /app/nodemon.json ./
 COPY --from=builder /app/railway.json ./
 COPY --from=builder /app/src/js ./src/js
 COPY --from=builder /app/src/style ./src/style
+COPY --from=builder /app/src/html ./src/html
 
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
