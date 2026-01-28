@@ -1,11 +1,10 @@
-import { EVENTS } from "@builderbot/bot";
-import { BaileysProvider } from "builderbot-provider-sherpa";
+import { EVENTS, ProviderClass } from "@builderbot/bot";
 
 class ErrorReporter {
-    private provider: BaileysProvider;
+    private provider: ProviderClass;
     private groupId: string;
 
-    constructor(provider: BaileysProvider, groupId: string) {
+    constructor(provider: ProviderClass, groupId: string) {
         this.provider = provider;
         this.groupId = groupId;
     }

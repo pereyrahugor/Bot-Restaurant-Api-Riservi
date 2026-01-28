@@ -12,8 +12,8 @@ import {
   EVENTS,
 } from "@builderbot/bot";
 import { MemoryDB } from "@builderbot/bot";
-import { BaileysProvider } from "builderbot-provider-sherpa";
-import { restoreSessionFromDb, startSessionSync, deleteSessionFromDb } from "./utils/sessionSync";
+import { YCloudProvider } from "./providers/YCloudProvider";
+// import { restoreSessionFromDb, startSessionSync, deleteSessionFromDb } from "./utils/sessionSync";
 import { toAsk, httpInject } from "@builderbot-plugins/openai-assistants";
 import { typing } from "./utils/presence";
 import QRCode from 'qrcode';
@@ -49,50 +49,13 @@ export const userQueues = new Map();
 export const userLocks = new Map();
 
 // Función auxiliar para verificar si existe sesión activa (Local o Remota)
+// Función auxiliar para verifica estado (API)
 const hasActiveSession = async () => {
-  try {
-    // 1. Verificar si el proveedor está realmente conectado
-    // En builderbot-provider-sherpa (Baileys), el socket suele estar en vendor
-    // @ts-ignore
-    const isReady = !!(adapterProvider?.vendor?.user || adapterProvider?.globalVendorArgs?.sock?.user);
-
-    // 2. Verificar localmente
-    const sessionsDir = path.join(process.cwd(), 'bot_sessions');
-    let localActive = false;
-    if (fs.existsSync(sessionsDir)) {
-      const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
-      // creds.json es el archivo crítico para Baileys
-      localActive = files.includes('creds.json');
-    }
-
-    // Si está conectado, es la prioridad máxima
-    if (isReady) return { active: true, source: 'connected' };
-
-    // Si tiene creds.json, es muy probable que se conecte pronto
-    if (localActive) return { active: true, source: 'local' };
-
-    // 3. Si no hay nada local, verificar en DB
-    // @ts-ignore
-    const remoteActive = await import("./utils/sessionSync").then(m => m.isSessionInDb());
-    if (remoteActive) {
-      return {
-        active: false,
-        hasRemote: true,
-        message: 'Sesión encontrada en la nube. El bot está intentando restaurarla. Si el QR aparece, puedes escanearlo para generar una nueva.'
-      };
-    }
-
-    return { active: false, hasRemote: false };
-  } catch (error) {
-    console.error('Error verificando sesión:', error);
-    return { active: false, error: error instanceof Error ? error.message : String(error) };
-  }
+  // Con YCloud (API), la sesión se considera "siempre activa" si hay API Key.
+  return { active: true, source: 'ycloud-api' };
 };
 
-const adapterProvider = createProvider(BaileysProvider, {
-  groupsIgnore: false,
-  readStatus: false,
-});
+const adapterProvider = createProvider(YCloudProvider, {});
 
 const errorReporter = new ErrorReporter(adapterProvider, ID_GRUPO_RESUMEN); // Reemplaza YOUR_GROUP_ID con el ID del grupo de WhatsApp
 
@@ -293,18 +256,15 @@ export const handleQueue = async (userId) => {
 
 // Main function to initialize the bot and load Google Sheets data
 const main = async () => {
-  // Restaurar sesión de WhatsApp desde Supabase si existe (ANTES de crear el provider)
-  await restoreSessionFromDb();
+  // Restaurar sesión: NO NECESARIO EN YCLOUD
+  // await restoreSessionFromDb();
 
-  // Limpiar QR antiguo al inicio
+  // Limpiar QR antiguo al inicio (opcional, limpieza)
   const qrPath = path.join(process.cwd(), 'bot.qr.png');
   if (fs.existsSync(qrPath)) {
     try {
       fs.unlinkSync(qrPath);
-      console.log('🗑️ [Init] QR antiguo eliminado.');
-    } catch (e) {
-      console.error('⚠️ [Init] No se pudo eliminar QR antiguo:', e);
-    }
+    } catch (e) { }
   }
 
   // ...existing code...
@@ -319,46 +279,9 @@ const main = async () => {
     welcomeFlowImg,
     idleFlow,
   ]);
-  const adapterProvider = createProvider(BaileysProvider, {
-    version: [2, 3000, 1030817285],
-    groupsIgnore: false,
-    readStatus: false,
-  });
+  const adapterProvider = createProvider(YCloudProvider, {});
 
-  // Listener para generar el archivo QR manualmente cuando se solicite
-  adapterProvider.on('require_action', async (payload: any) => {
-    console.log('⚡ [Provider] require_action received. Payload:', payload);
-
-    // Intentar extraer el string del QR de varias formas posibles
-    let qrString = null;
-
-    if (typeof payload === 'string') {
-      qrString = payload;
-    } else if (payload && typeof payload === 'object') {
-      if (payload.qr) qrString = payload.qr;
-      else if (payload.code) qrString = payload.code;
-    }
-
-    if (qrString && typeof qrString === 'string') {
-      console.log('⚡ [Provider] QR Code detected (length: ' + qrString.length + '). Generating image...');
-      try {
-        const qrPath = path.join(process.cwd(), 'bot.qr.png');
-        await QRCode.toFile(qrPath, qrString, {
-          color: {
-            dark: '#000000',
-            light: '#ffffff'
-          },
-          scale: 4,
-          margin: 2
-        });
-        console.log(`✅ [Provider] QR Image saved to ${qrPath}`);
-      } catch (err) {
-        console.error('❌ [Provider] Error generating QR image:', err);
-      }
-    } else {
-      console.log('⚠️ [Provider] require_action received but could not extract QR string.');
-    }
-  });
+  /* QR Listener eliminado para YCloud */
 
   const adapterDB = new MemoryDB();
   const { httpServer } = await createBot({
@@ -368,7 +291,8 @@ const main = async () => {
   });
 
   // Iniciar sincronización periódica de sesión hacia Supabase
-  startSessionSync();
+  // Sincronización DB: NO NECESARIO EN YCLOUD
+  // startSessionSync();
 
   const app = adapterProvider.server;
 
@@ -531,6 +455,11 @@ const main = async () => {
   });
 
   // API Endpoints
+  // Endpoint Webhook para YCloud
+  app.post('/webhook', (req, res) => {
+    // @ts-ignore
+    adapterProvider.handleWebhook(req, res);
+  });
   app.get('/api/assistant-name', (req, res) => {
     const assistantName = process.env.ASSISTANT_NAME || 'Asistente demo';
     // @ts-ignore
@@ -543,17 +472,17 @@ const main = async () => {
     res.json(status);
   });
 
-  app.post('/api/delete-session', async (req, res) => {
-    try {
-      await deleteSessionFromDb();
-      // @ts-ignore
-      res.json({ success: true });
-    } catch (err) {
-      console.error('Error en /api/delete-session:', err);
-      // @ts-ignore
-      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
-    }
-  });
+  // app.post('/api/delete-session', async (req, res) => {
+  //   try {
+  //     // await deleteSessionFromDb();
+  //     // @ts-ignore
+  //     res.json({ success: true });
+  //   } catch (err) {
+  //     console.error('Error en /api/delete-session:', err);
+  //     // @ts-ignore
+  //     res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  //   }
+  // });
 
   app.post("/api/restart-bot", async (req, res) => {
     console.log('POST /api/restart-bot recibido');
@@ -912,6 +841,13 @@ const main = async () => {
   httpInject(adapterProvider.server);
   // Paso 11: Iniciar el servidor HTTP en el puerto especificado
   httpServer(+PORT);
+
+  // Log de Webhook URL para YCloud
+  if (process.env.PROJECT_URL) {
+    console.log(`\n✅ YCloud Webhook URL (Configurar en Panel): ${process.env.PROJECT_URL}/webhook\n`);
+  } else {
+    console.log(`\n⚠️ Define PROJECT_URL en .env para ver la URL completa del Webhook.\n`);
+  }
 };
 
 process.on("unhandledRejection", (reason, promise) => {
