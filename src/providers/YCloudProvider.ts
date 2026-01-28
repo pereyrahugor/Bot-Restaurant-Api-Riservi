@@ -87,27 +87,42 @@ class YCloudProvider extends ProviderClass {
     public handleWebhook = (req: any, res: any) => {
         try {
             const body = req.body;
-            // Estructura típica de Meta/YCloud para mensajes entrantes
-            // Documentación YCloud: https://docs.ycloud.com/reference/whatsapp-inbound-message-webhook-examples
+            console.log('[YCloudProvider] Webhook recibido:', JSON.stringify(body));
 
-            // Verificamos si es un evento de mensaje entrante
-            if (body.object === 'whatsapp_business_account' || body.entry) {
+            // 1. Formato Nativo de YCloud (whatsapp.inbound_message.received)
+            if (body.type === 'whatsapp.inbound_message.received' && body.whatsappInboundMessage) {
+                const msg = body.whatsappInboundMessage;
+                
+                // Mapear evento al formato de BuilderBot
+                const formatedMessage = {
+                    body: msg.text?.body || 
+                          msg.interactive?.button_reply?.title || 
+                          msg.interactive?.list_reply?.title || 
+                          msg.button?.text || '',
+                    from: msg.from.replace('+', ''),
+                    name: msg.customerProfile?.name || 'User',
+                    type: msg.type,
+                    payload: msg
+                };
+
+                this.emit('message', formatedMessage);
+            } 
+            // 2. Formato Meta (WhatsApp Business Account / Cloud API)
+            else if (body.object === 'whatsapp_business_account' || body.entry) {
                 body.entry?.forEach((entry: any) => {
                     entry.changes?.forEach((change: any) => {
                         if (change.value?.messages) {
                             change.value.messages.forEach((msg: any) => {
-                                // Mapear evento al formato de BuilderBot
-                                // from: número del usuario
-                                // body: contenido del mensaje
                                 const formatedMessage = {
-                                    body: msg.text?.body || '',
-                                    from: msg.from,
+                                    body: msg.text?.body || 
+                                          msg.interactive?.button_reply?.title || 
+                                          msg.interactive?.list_reply?.title || 
+                                          msg.button?.text || '',
+                                    from: msg.from.replace('+', ''),
                                     name: msg.profile?.name || 'User',
                                     type: msg.type,
                                     payload: msg
                                 };
-
-                                // Emitir evento 'message' que consume el bot
                                 this.emit('message', formatedMessage);
                             });
                         }
@@ -117,12 +132,14 @@ class YCloudProvider extends ProviderClass {
 
             // Responder 200 OK para confirmar recepción a YCloud
             if (!res.headersSent) {
-                res.sendStatus(200);
+                res.statusCode = 200;
+                res.end('OK');
             }
         } catch (e) {
             console.error('[YCloudProvider] Error parsing webhook:', e);
             if (!res.headersSent) {
-                res.sendStatus(500);
+                res.statusCode = 500;
+                res.end('Error');
             }
         }
     }

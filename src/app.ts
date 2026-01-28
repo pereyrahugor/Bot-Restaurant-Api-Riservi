@@ -296,9 +296,11 @@ const main = async () => {
 
   const app = adapterProvider.server;
 
-  // Middleware de logging
+  // Middleware de logging detallado para POST
   app.use((req, res, next) => {
-    console.log(`[REQUEST] ${req.method} ${req.url}`);
+    if (req.method === 'POST') {
+      console.log(`[POST-DEBUG] ${req.url} - Headers: ${JSON.stringify(req.headers['content-type'])}`);
+    }
     next();
   });
 
@@ -429,6 +431,13 @@ const main = async () => {
     }
   }
 
+  // Endpoint Webhook para YCloud (Definido antes de httpInject por seguridad)
+  app.post('/webhook', (req, res) => {
+    console.log('[DEBUG] Petición recibida en /webhook');
+    // @ts-ignore
+    adapterProvider.handleWebhook(req, res);
+  });
+
   httpInject(adapterProvider.server);
 
   // Registrar páginas HTML
@@ -454,12 +463,7 @@ const main = async () => {
     }
   });
 
-  // API Endpoints
-  // Endpoint Webhook para YCloud
-  app.post('/webhook', (req, res) => {
-    // @ts-ignore
-    adapterProvider.handleWebhook(req, res);
-  });
+  // Endpoint Webhook movido arriba
   app.get('/api/assistant-name', (req, res) => {
     const assistantName = process.env.ASSISTANT_NAME || 'Asistente demo';
     // @ts-ignore
