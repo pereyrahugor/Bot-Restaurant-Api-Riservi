@@ -296,8 +296,13 @@ const main = async () => {
 
   const app = adapterProvider.server;
 
-  // Middleware de logging detallado para POST
+  // Middleware de logging detallado y normalización de URL
   app.use((req, res, next) => {
+    // Normalizar URL: cambiar // por / (común cuando hay errores de configuración en el dashboard del proveedor)
+    if (req.url.startsWith('//')) {
+      req.url = req.url.replace(/^\/+/, '/');
+    }
+
     if (req.method === 'POST') {
       console.log(`[POST-DEBUG] ${req.url} - Headers: ${JSON.stringify(req.headers['content-type'])}`);
     }
