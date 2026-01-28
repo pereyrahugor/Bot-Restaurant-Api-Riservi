@@ -14,7 +14,7 @@ function toArgentinaTime(fechaReservaStr: string): string {
     return `${yyyy}-${mm}-${dd} ${hhh}:${mmm}`;
 }
 import { JsonBlockFinder } from "../Api-Riservi/JsonBlockFinder";
-import { checkAvailability, createReservation, updateReservationById, cancelReservationById } from "../Api-Riservi/riservi";
+import { checkAvailability, createReservation, updateReservationById, cancelReservationById, confirmReservationById } from "../Api-Riservi/riservi";
 import { ApiQueue } from "./ApiQueue";
 import fs from 'fs';
 import moment from 'moment';
@@ -391,6 +391,32 @@ export class AssistantResponseProcessor {
                     if (unblockUser) unblockUser();
                 }
                 console.log('[API Debug] Respuesta de cancelReservationById:', apiResponse);
+                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
+                if (assistantApiResponse) {
+                    try {
+                        await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
+                        if (ctx && ctx.type !== 'webchat') {
+                            console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
+                        }
+                    } catch (err) {
+                        console.error('[WhatsApp Debug] Error en flowDynamic:', err);
+                    }
+                }
+                return;
+            }
+
+            if (tipo === "#CONFIRMAR#") {
+                let apiResponse;
+                try {
+                    // Llamada directa a confirmReservationById
+                    apiResponse = await confirmReservationById(
+                        jsonData.id,
+                        process.env.RESERVI_API_KEY
+                    );
+                } finally {
+                    if (unblockUser) unblockUser();
+                }
+                console.log('[API Debug] Respuesta de confirmReservationById:', apiResponse);
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) {
                     try {

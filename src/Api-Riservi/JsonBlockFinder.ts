@@ -7,7 +7,8 @@ export class JsonBlockFinder {
             { tag: 'JSON-RESERVA', type: '#RESERVA#' },
             { tag: 'JSON-DISPONIBLE', type: '#DISPONIBLE#' },
             { tag: 'JSON-MODIFICAR', type: '#MODIFICAR#' },
-            { tag: 'JSON-CANCELAR', type: '#CANCELAR#' }
+            { tag: 'JSON-CANCELAR', type: '#CANCELAR#' },
+            { tag: 'JSON-CONFIRMAR', type: '#CONFIRMAR#' }
         ];
         for (const { tag, type } of etiquetas) {
             // Corregido: buscar etiquetas literales [JSON-RESERVA], etc.
@@ -29,7 +30,7 @@ export class JsonBlockFinder {
         for (const block of bloques) {
             try {
                 const parsed = JSON.parse(block);
-                if (["#RESERVA#", "#DISPONIBLE#", "#MODIFICAR#", "#CANCELAR#"].includes(parsed.type)) {
+                if (["#RESERVA#", "#DISPONIBLE#", "#MODIFICAR#", "#CANCELAR#", "#CONFIRMAR#"].includes(parsed.type)) {
                     return parsed;
                 }
             } catch (e) {

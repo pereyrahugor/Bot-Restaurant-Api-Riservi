@@ -253,4 +253,26 @@ export const cancelReservationById = async (id: string, apiKey?: string) => {
     }
 };
 
+export const confirmReservationById = async (id: string, apiKey?: string) => {
+    const keyToUse = apiKey || API_KEY;
+    const url = `${BASE_URL}/bookings/${id}/confirm`;
+    // LOG de entrada para confirmReservationById
+    console.log('[Riservi API] confirmReservationById params:', { id });
+    try {
+        const response = await axios.patch(url, {}, {
+            headers: {
+                Authorization: `Bearer ${keyToUse}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        return response.data;
+    } catch (error) {
+        if (error.response) {
+            return error.response.data;
+        } else {
+            return { error: String(error) };
+        }
+    }
+};
+
 //ok
