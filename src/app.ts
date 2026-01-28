@@ -254,9 +254,15 @@ export const handleQueue = async (userId) => {
   userQueues.delete(userId);
 };
 
+import { initGroupSender } from "./utils/groupSender";
+
 // Main function to initialize the bot and load Google Sheets data
 const main = async () => {
-  // Restaurar sesión: NO NECESARIO EN YCLOUD
+  // Inicializar Provider Secundario para Grupos (Baileys)
+  // Esto levantará su lógica de QR y sesión independientemente del bot principal
+  await initGroupSender();
+
+  // Restaurar sesión principal (YCloud no la usa, pero dejamos comentado por referencia)
   // await restoreSessionFromDb();
 
   // Limpiar QR antiguo al inicio (opcional, limpieza)
