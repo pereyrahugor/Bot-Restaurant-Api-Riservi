@@ -4,13 +4,14 @@ El dashboard principal es la interfaz web del bot, accesible vía navegador, que
 
 ## Definición Técnica
 * **Método**: `GET`
-* **Ruta**: `/`
+* **Ruta**: `/dashboard` (La ruta raíz `/` redirige aquí)
 
 ## Funcionalidades
 1. **Estado de Sesión**: Indica si el bot tiene una sesión de WhatsApp activa o si está esperando ser vinculado.
 2. **Visualización de QR**: Muestra el código QR dinámicamente si no hay sesión iniciada.
 3. **Acceso a WebChat**: Botón directo para abrir la interfaz de chat web.
-4. **Reseteo de Sesión**: Botón de "Zona de Peligro" para borrar las sesiones locales y remotas.
+4. **Gestión de Variables**: Acceso al panel para modificar variables de entorno en tiempo real.
+5. **Reseteo de Sesión**: Botón de "Zona de Peligro" para borrar las sesiones locales y remotas.
 
 ## Interfaz Visual
 El dashboard utiliza un diseño moderno con las siguientes características:

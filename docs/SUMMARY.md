@@ -17,6 +17,7 @@
 * [Imagen QR](bot-api/qr-image.md)
 * [Reiniciar Sesión](bot-api/reset-session.md)
 * [WebChat API](bot-api/webchat-api.md)
+* [Gestión de Variables](bot-api/variables.md)
 * [Reiniciar Bot (Railway)](bot-api/restart-bot.md)
 
 ## Flujos de Conversación
