@@ -94,13 +94,19 @@ export const initGroupSender = async () => {
         await restoreSessionFromDb('groups');
 
         // 2. Crear instancia de Baileys estándar con versión forzada
-        // 2. Restaurar createProvider con la versión específica que evitaba el error 405
+        // 2. Restaurar createProvider con configuración de silencio para evitar spam
         groupProvider = createProvider(BaileysProvider, {
             version: [2, 3000, 1030817285],
             groupsIgnore: false,
             readStatus: false,
             disableHttpServer: true,
+            //@ts-ignore - Silenciar logs internos de Baileys
+            logger: { level: 'silent', stream: { write: () => {} } },
+            //@ts-ignore - Evitar reintentos infinitos de conexión/descifrado
+            authTimeoutMs: 10000 
         });
+        
+        console.log('🔇 [GroupSender] Logs internos silenciados para evitar spam.');
 
         groupProvider.on('require_action', async (payload: any) => {
             isGroupReady = false; // Si pide QR, ya no está listo
