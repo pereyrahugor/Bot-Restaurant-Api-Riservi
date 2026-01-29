@@ -82,16 +82,39 @@ export const initGroupSender = async () => {
         // 3. Manejo de eventos para diagnóstico
         groupProvider.on('require_action', async (payload: any) => {
             console.log(`[GroupSender] Evento require_action recibido a las ${new Date().toLocaleTimeString()}`);
+            console.log(`[GroupSender] Payload completo:`, JSON.stringify(payload));
+
             let qrString = null;
-            if (typeof payload === 'string') qrString = payload;
-            else if (payload?.qr) qrString = payload.qr;
-            else if (payload?.code) qrString = payload.code;
+
+            // Intento de captura de QR en diferentes estructuras posibles
+            if (typeof payload === 'string' && payload.length > 20) {
+                qrString = payload;
+            } else if (payload?.qr) {
+                qrString = payload.qr;
+            } else if (payload?.code) {
+                qrString = payload.code;
+            } else if (payload?.instructions?.qr) {
+                qrString = payload.instructions.qr;
+            }
 
             if (qrString) {
-                console.log('⚡ [GroupSender] Generando imagen QR: bot.groups.qr.png');
-                const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
-                await QRCode.toFile(qrPath, qrString, { scale: 4, margin: 2 });
-                console.log(`✅ [GroupSender] QR guardado en: ${qrPath}`);
+                console.log('⚡ [GroupSender] Cadena QR detectada. Generando archivo bot.groups.qr.png...');
+                try {
+                    const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
+                    await QRCode.toFile(qrPath, qrString, { 
+                        scale: 10,  // Aumentar escala para mejor lectura
+                        margin: 2,
+                        color: {
+                            dark: '#000000',
+                            light: '#ffffff'
+                        }
+                    });
+                    console.log(`✅ [GroupSender] QR escrito físicamente en: ${qrPath}`);
+                } catch (qrErr) {
+                    console.error('❌ [GroupSender] Error al escribir el archivo QR:', qrErr);
+                }
+            } else {
+                console.warn('⚠️ [GroupSender] Se recibió require_action pero no se encontró una cadena QR válida en el payload.');
             }
         });
 
