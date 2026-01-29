@@ -29,23 +29,31 @@ export const sendToGroup = async (number: string, message: string) => {
     }
 
     try {
-        console.log(`📤 [GroupSender] Validando grupo y enviando a ${number}...`);
+        console.log(`📤 [GroupSender] Preparando canal cifrado para ${number}...`);
         
-        // FORZAR SINCRONIZACIÓN DE LLAVES: 
-        // Consultar los metadatos del grupo antes de enviar suele solucionar el error 'No sessions'
-        // ya que obliga a Baileys a obtener las llaves de los participantes.
+        // RECETA PARA FORZAR CIFRADO:
+        // 1. Suscribirse a la presencia del grupo
+        // 2. Obtener metadatos actualizados
+        // 3. Simular que el bot está 'componiendo' mensaje
+        // Estos pasos obligan a Baileys/WhatsApp a validar las llaves de los participantes.
         try {
-            if (vendor.groupMetadata) {
-                await vendor.groupMetadata(number);
-                console.log(`[GroupSender] Metadatos del grupo obtenidos correctamente.`);
-            }
+            if (vendor.presenceSubscribe) await vendor.presenceSubscribe(number);
+            if (vendor.groupMetadata) await vendor.groupMetadata(number);
+            if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('composing', number);
+            
+            // Pequeña espera para que la sincronización de llaves ocurra
+            await new Promise(res => setTimeout(res, 1000));
+            console.log(`[GroupSender] Canal sincronizado.`);
         } catch (e: any) {
-            console.warn(`[GroupSender] No se pudieron obtener metadatos (podría ser normal):`, e.message);
+            console.warn(`[GroupSender] Aviso en sincronización (pre-envío):`, e.message);
         }
 
         //@ts-ignore
         await groupProvider.sendMessage(number, message, {});
         console.log(`✅ [GroupSender] Mensaje enviado.`);
+        
+        // Detener el estado de 'componiendo'
+        try { if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('paused', number); } catch(e){}
     } catch (error: any) {
         const errorMsg = error?.message || String(error);
         
