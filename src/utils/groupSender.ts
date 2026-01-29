@@ -1,5 +1,5 @@
 import { createProvider } from '@builderbot/bot';
-import { BaileysProvider } from 'builderbot-provider-sherpa';
+import { BaileysProvider } from '@builderbot/provider-baileys';
 import { restoreSessionFromDb, startSessionSync } from './sessionSync';
 import fs from 'fs';
 import path from 'path';
@@ -71,10 +71,12 @@ export const initGroupSender = async () => {
         // 1. Restaurar sesión (usamos 'groups' para separar la sesión de grupos del bot principal)
         await restoreSessionFromDb('groups');
 
-        // 2. Crear instancia de Baileys
+        // 2. Crear instancia de Baileys con versión específica para evitar errores de conexión
         groupProvider = createProvider(BaileysProvider, {
+            version: [2, 3000, 1030817285],
             groupsIgnore: false,
             readStatus: false,
+            disableHttpServer: true,
         });
 
         // 3. Manejo de eventos para diagnóstico

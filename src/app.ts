@@ -904,10 +904,11 @@ const main = async () => {
   httpServer(+PORT);
 
   // Log de Webhook URL para YCloud
-  if (process.env.PROJECT_URL) {
-    console.log(`\n✅ YCloud Webhook URL (Configurar en Panel): ${process.env.PROJECT_URL}/webhook\n`);
+  if (process.env.PUBLIC_URL || process.env.PROJECT_URL) {
+    const baseUrl = (process.env.PUBLIC_URL || process.env.PROJECT_URL).replace(/\/$/, '');
+    console.log(`\n✅ YCloud Webhook URL (Configurar en Panel): ${baseUrl}/webhook\n`);
   } else {
-    console.log(`\n⚠️ Define PROJECT_URL en .env para ver la URL completa del Webhook.\n`);
+    console.log(`\n⚠️ Define PUBLIC_URL o PROJECT_URL en .env para ver la URL completa del Webhook.\n`);
   }
 };
 
