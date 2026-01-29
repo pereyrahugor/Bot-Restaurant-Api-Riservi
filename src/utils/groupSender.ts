@@ -79,17 +79,12 @@ export const initGroupSender = async () => {
     try {
         await restoreSessionFromDb('groups');
 
+        // 2. Crear instancia de Baileys estándar con versión forzada
         groupProvider = createProvider(BaileysProvider, {
             version: [2, 3000, 1030817285],
             groupsIgnore: false,
             readStatus: false,
             disableHttpServer: true,
-            // Aislamiento de carpeta
-            //@ts-ignore
-            basePath: 'groups_sessions',
-            // Parches de estabilidad
-            //@ts-ignore
-            patchMessageBeforeSending: true
         });
 
         groupProvider.on('require_action', async (payload: any) => {
