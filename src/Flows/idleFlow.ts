@@ -2,9 +2,8 @@ import { addKeyword, EVENTS } from '@builderbot/bot';
 import { toAsk } from '@builderbot-plugins/openai-assistants';
 import { GenericResumenData, extraerDatosResumen } from '~/utils/extractJsonData';
 import { addToSheet } from '~/utils/googleSheetsResumen';
-import fs from 'fs';
-import path from 'path';// Import the new logic
 import { ReconectionFlow } from './reconectionFlow';
+import { sendToGroup } from '../utils/groupSender'; // Importar helper robusto
 
 //** Variables de entorno para el envio de msj de resumen a grupo de WS */
 const ASSISTANT_ID = process.env.ASSISTANT_ID ?? '';
@@ -12,9 +11,6 @@ const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_RESUMEN ?? '';
 const msjCierre: string = process.env.msjCierre as string;
 
 //** Flow para cierre de conversación, generación de resumen y envio a grupo de WS */
-import { groupProvider } from '../utils/groupSender'; // Importar provider secundario con ruta relativa
-
-//** Variables de entorno para el envio de msj de resumen a grupo de WS */
 const idleFlow = addKeyword(EVENTS.ACTION).addAction(
     async (ctx, { endFlow, provider, state }) => {
         console.log("Ejecutando idleFlow...");
@@ -41,14 +37,23 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             // Limpieza robusta de caracteres invisibles y espacios
             const tipo = (data.tipo ?? '').replace(/[^A-Z_]/gi, '').toUpperCase();
 
+            // Función auxiliar local para manejar el envío al grupo
+            const handleGroupSending = async () => {
+                const resumenConLink = `${resumen}\n\n🔗 [Chat del usuario](${data.linkWS})`;
+                try {
+                    await sendToGroup(ID_GRUPO_RESUMEN, resumenConLink);
+                } catch (err) {
+                    console.error(`❌ Error enviando resumen al grupo ${ID_GRUPO_RESUMEN}:`, err?.message || err);
+                }
+            };
+
+            data.linkWS = `https://wa.me/${ctx.from.replace(/[^0-9]/g, '')}`;
+
             if (tipo === 'NO_REPORTAR_BAJA') {
-                // No seguimiento, no enviar resumen al grupo ws, envia resumen a sheet, envia msj de cierre
                 console.log('NO_REPORTAR_BAJA: No se realiza seguimiento ni se envía resumen al grupo.');
-                data.linkWS = `https://wa.me/${ctx.from.replace(/[^0-9]/g, '')}`;
                 await addToSheet(data);
-                return endFlow(); //("BNI, cambiando la forma en que el mundo hace negocios\nGracias por su contacto.");
+                return endFlow();
             } else if (tipo === 'NO_REPORTAR_SEGUIR') {
-                // Solo este activa seguimiento
                 console.log('NO_REPORTAR_SEGUIR: Se realiza seguimiento, pero no se envía resumen al grupo.');
                 const reconFlow = new ReconectionFlow({
                     ctx,
@@ -56,7 +61,6 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                     provider,
                     maxAttempts: 3,
                     onSuccess: async (newData) => {
-                        // Derivar al flujo conversacional usando gotoFlow
                         if (typeof ctx.gotoFlow === 'function') {
                             if (ctx.type === 'voice_note' || ctx.type === 'VOICE_NOTE') {
                                 const mod = await import('./welcomeFlowVoice');
@@ -68,63 +72,27 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                         }
                     },
                     onFail: async () => {
-                        data.linkWS = `https://wa.me/${ctx.from.replace(/[^0-9]/g, '')}`;
                         await addToSheet(data);
                     }
                 });
                 return await reconFlow.start();
-                // No cerrar el hilo aquí, dejar abierto para que el usuario pueda responder
             } else if (tipo === 'SI_RESUMEN') {
-                // Solo envía resumen al grupo ws y sheets, no envia msj de cierre
                 console.log('SI_RESUMEN: Solo se envía resumen al grupo y sheets.');
-                data.linkWS = `https://wa.me/${ctx.from.replace(/[^0-9]/g, '')}`;
-                {
-                    const resumenConLink = `${resumen}\n\n🔗 [Chat del usuario](${data.linkWS})`;
-                    try {
-                        console.log('[DEBUG] Intentando enviar a grupo...');
-                        const vendorReady = groupProvider && groupProvider['vendor'];
-                        console.log(`[DEBUG] groupProvider.vendor ready? ${!!vendorReady}`);
-
-                        if (groupProvider && typeof groupProvider.sendMessage === 'function') {
-                            if (!vendorReady) {
-                                console.warn('⚠️ [GroupSender] Warning: Vendor (socket) parece no estar listo/conectado aún. Intentando enviar de todas formas...');
-                            }
-                            await groupProvider.sendMessage(ID_GRUPO_RESUMEN, resumenConLink, {});
-                            console.log(`✅ SI_RESUMEN: Resumen enviado a ${ID_GRUPO_RESUMEN} vía Baileys`);
-                        } else {
-                            console.error(`❌ Error: groupProvider no está listo o no es válido. Estado: ${groupProvider ? 'Objeto presente' : 'Undefined/Null'}`);
-                        }
-                    } catch (err) {
-                        console.error(`❌ SI_RESUMEN: No se pudo enviar el resumen al grupo ${ID_GRUPO_RESUMEN}:`, err?.message || err);
-                    }
-                }
+                await handleGroupSending();
                 await addToSheet(data);
-                return; // No enviar mensaje de cierre
+                return;
             } else {
-                // Si aparece otro tipo, se procede como SI_RESUMEN por defecto
-                console.log('Tipo desconocido, procesando como SI_RESUMEN por defecto.');
-                data.linkWS = `https://wa.me/${ctx.from.replace(/[^0-9]/g, '')}`;
-                {
-                    const resumenConLink = `${resumen}\n\n🔗 [Chat del usuario](${data.linkWS})`;
-                    try {
-                        if (groupProvider) {
-                            await groupProvider.sendMessage(ID_GRUPO_RESUMEN, resumenConLink, {});
-                            console.log(`✅ DEFAULT: Resumen enviado a ${ID_GRUPO_RESUMEN} vía Baileys`);
-                        } else {
-                            console.error(`❌ Error: groupProvider (Baileys) no está inicializado.`);
-                        }
-                    } catch (err) {
-                        console.error(`❌ DEFAULT: No se pudo enviar el resumen al grupo ${ID_GRUPO_RESUMEN}:`, err?.message || err);
-                    }
-                }
+                console.log('Tipo desconocido/DEFAULT. Procesando como SI_RESUMEN.');
+                await handleGroupSending();
                 await addToSheet(data);
-                return; // No enviar mensaje de cierre
+                return;
             }
+
         } catch (error) {
-            // Captura errores generales del flujo
             console.error("Error al obtener el resumen de OpenAI:", error);
-            return endFlow(); //("BNI, cambiando la forma en que el mundo hace negocios\nGracias por su contacto.");
+            return endFlow();
         }
-    });
+    }
+);
 
 export { idleFlow };

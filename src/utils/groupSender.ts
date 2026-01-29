@@ -7,6 +7,51 @@ import QRCode from 'qrcode';
 
 export let groupProvider: any; // Tipo any para evitar conflictos de tipos estrictos por ahora
 
+/**
+ * Función robusta para enviar mensajes a grupos
+ * Maneja reintentos básicos por conexión cerrada
+ */
+export const sendToGroup = async (number: string, message: string) => {
+    if (!groupProvider) {
+        throw new Error('GroupProvider no inicializado.');
+    }
+
+    // Verificar si el vendor interna existe
+    if (!groupProvider.vendor) {
+        console.warn('⚠️ [GroupSender] Vendor no detectado. Intentando inicializar...');
+        await groupProvider.initVendor();
+        await new Promise(res => setTimeout(res, 2000)); // Esperar un poco a que conecte
+    }
+
+    try {
+        console.log(`📤 [GroupSender] Enviando mensaje a ${number}...`);
+        await groupProvider.sendMessage(number, message, {});
+        console.log(`✅ [GroupSender] Mensaje enviado correctamente.`);
+    } catch (error: any) {
+        const isConnectionError = error?.message?.includes('Connection Closed') ||
+            error?.message?.includes('closed') ||
+            error?.message?.includes('not open');
+
+        if (isConnectionError) {
+            console.warn('⚠️ [GroupSender] Error de conexión detectado. Reintentando en 3 segundos...');
+            await new Promise(res => setTimeout(res, 3000));
+
+            // Intento de reconexión ligero (initVendor suele ser idempotente o reinicia)
+            try {
+                if (groupProvider.initVendor) await groupProvider.initVendor();
+            } catch (e) {
+                console.error('[GroupSender] Error al re-inicializar vendor:', e);
+            }
+
+            // Reintento final
+            await groupProvider.sendMessage(number, message, {});
+            console.log(`✅ [GroupSender] Mensaje enviado en reintento.`);
+        } else {
+            throw error;
+        }
+    }
+};
+
 export const initGroupSender = async () => {
     console.log('🔌 [GroupSender] Iniciando Proveedor Baileys secundario para Grupos...');
 
