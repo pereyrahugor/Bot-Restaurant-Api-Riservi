@@ -13,7 +13,7 @@ import {
 } from "@builderbot/bot";
 import { MemoryDB } from "@builderbot/bot";
 import { YCloudProvider } from "./providers/YCloudProvider";
-// import { restoreSessionFromDb, startSessionSync, deleteSessionFromDb } from "./utils/sessionSync";
+import { deleteSessionFromDb } from "./utils/sessionSync";
 import { toAsk, httpInject } from "@builderbot-plugins/openai-assistants";
 import { typing } from "./utils/presence";
 import QRCode from 'qrcode';
@@ -504,17 +504,34 @@ const main = async () => {
     res.json(status);
   });
 
-  // app.post('/api/delete-session', async (req, res) => {
-  //   try {
-  //     // await deleteSessionFromDb();
-  //     // @ts-ignore
-  //     res.json({ success: true });
-  //   } catch (err) {
-  //     console.error('Error en /api/delete-session:', err);
-  //     // @ts-ignore
-  //     res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
-  //   }
-  // });
+  app.post('/api/delete-session', async (req, res) => {
+    try {
+      console.log('[API] Solicitud de eliminación de sesión recibida.');
+      const sessionsDir = path.join(process.cwd(), 'bot_sessions');
+      
+      // 1. Eliminar sesión local del GroupSender
+      if (fs.existsSync(sessionsDir)) {
+        console.log('[API] Eliminando directorio local:', sessionsDir);
+        fs.rmSync(sessionsDir, { recursive: true, force: true });
+      }
+
+      // 1.1 Eliminar QRs antiguos
+      ['bot.qr.png', 'bot.groups.qr.png'].forEach(file => {
+        const p = path.join(process.cwd(), file);
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      });
+
+      // 2. Eliminar sesión remota de Grupos (usamos el ID 'groups')
+      await deleteSessionFromDb('groups');
+
+      // @ts-ignore
+      res.json({ success: true, message: "Sesión eliminada correctamente" });
+    } catch (err) {
+      console.error('Error en /api/delete-session:', err);
+      // @ts-ignore
+      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
 
   app.post("/api/restart-bot", async (req, res) => {
     console.log('POST /api/restart-bot recibido');
