@@ -87,11 +87,12 @@ export const initGroupSender = async () => {
         await restoreSessionFromDb('groups');
 
         // 2. Crear instancia de Baileys estándar con versión forzada
-        // Usar la clase directamente en lugar de createProvider 
-        // para evitar que BuilderBot intente registrarlo como el proveedor principal
-        groupProvider = new BaileysProvider({
+        // 2. Restaurar createProvider con la versión específica que evitaba el error 405
+        groupProvider = createProvider(BaileysProvider, {
+            version: [2, 3000, 1030817285],
             groupsIgnore: false,
             readStatus: false,
+            disableHttpServer: true,
         });
 
         groupProvider.on('require_action', async (payload: any) => {
