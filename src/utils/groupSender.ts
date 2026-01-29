@@ -32,8 +32,20 @@ export const sendToGroup = async (number: string, message: string) => {
         
         // El error 'No sessions' es crítico: significa que los archivos de sesión están dañados.
         if (errorMsg.includes('No sessions') || errorMsg.includes('SessionError')) {
-            console.error('❌ [GroupSender] Error Crítico: Sesión corrupta (No sessions).');
-            throw new Error('La sesión de grupos está dañada. Por favor, ve al Dashboard y usa "Borrar Sesión y Reiniciar".');
+            console.error('❌ [GroupSender] Error Crítico: Sesión corrupta (No sessions). Forzando limpieza local...');
+            
+            // Intentar borrar bot_sessions localmente para forzar QR en el siguiente reinicio
+            try {
+                const sessionsDir = path.join(process.cwd(), 'bot_sessions');
+                if (fs.existsSync(sessionsDir)) {
+                    fs.rmSync(sessionsDir, { recursive: true, force: true });
+                    console.log('✅ [GroupSender] Carpeta bot_sessions eliminada preventivamente.');
+                }
+            } catch (e) {
+                console.error('[GroupSender] No se pudo limpiar la carpeta local:', e);
+            }
+
+            throw new Error('La sesión de grupos está dañada. Por favor, ve al Dashboard y usa "Borrar Sesión y Reiniciar" para limpiar la nube también.');
         }
 
         const isConnectionError = errorMsg.includes('Connection Closed') ||
