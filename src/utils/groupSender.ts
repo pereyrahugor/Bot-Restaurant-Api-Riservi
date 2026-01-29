@@ -9,111 +9,62 @@ export let groupProvider: any;
 let isGroupReady = false;
 
 /**
- * Función para enviar a Discord (Fallback opcional)
- */
-export const sendToDiscord = async (message: string) => {
-    const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-    if (!webhookUrl) return false;
-
-    try {
-        await fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                content: '📊 **Nuevo Resumen de Reserva**',
-                embeds: [{
-                    description: message,
-                    color: 5814783
-                }]
-            })
-        });
-        console.log('✅ [Discord] Resumen enviado correctamente.');
-        return true;
-    } catch (e) {
-        console.error('❌ [Discord] Error enviando webhook:', e);
-        return false;
-    }
-};
-
-/**
- * Función para enviar vía API Oficial de YCloud (Máxima fiabilidad)
- * Ideal para enviar resúmenes a números personales desde la línea del bot.
+ * Función para enviar vía YCloud (Solo como fallback si se desea)
  */
 export const sendViaYCloud = async (to: string, message: string) => {
     const apiKey = process.env.YCLOUD_API_KEY;
     const from = process.env.YCLOUD_WABA_NUMBER;
-    
-    if (!apiKey || !from) {
-        console.error('❌ [YCloud-Report] Faltan credenciales YCLOUD_API_KEY o YCLOUD_WABA_NUMBER');
-        return false;
-    }
-
+    if (!apiKey || !from) return false;
     const cleanNumber = to.replace(/\D/g, '');
-
     try {
         const response = await fetch('https://api.ycloud.com/v2/whatsapp/messages', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-API-Key': apiKey
-            },
-            body: JSON.stringify({
-                from,
-                to: cleanNumber,
-                type: 'text',
-                text: { body: message }
-            })
+            headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+            body: JSON.stringify({ from, to: cleanNumber, type: 'text', text: { body: message } })
         });
-
-        const data = await response.json();
-        if (response.ok) {
-            console.log(`✅ [YCloud-Report] Resumen enviado oficialmente a ${cleanNumber}`);
-            return true;
-        } else {
-            console.error('❌ [YCloud-Report] Falló el envío oficial:', data);
-            return false;
-        }
-    } catch (e) {
-        console.error('❌ [YCloud-Report] Error en petición API:', e);
-        return false;
-    }
+        return response.ok;
+    } catch (e) { return false; }
 };
 
 /**
- * Función principal para envío de resúmenes.
- * Decide automáticamente si usar YCloud (para números) o Baileys (para grupos).
+ * Función Principal para Grupos (Baileys)
+ * Optimizada para coexistir con la misma línea de YCloud
  */
 export const sendToGroup = async (target: string, message: string) => {
-    // 1. Prioridad: Determinar si usamos la línea oficial (YCloud)
-    // Se usa si target es un número común o si existe REPORT_PHONE_NUMBER
-    const adminNumber = process.env.REPORT_PHONE_NUMBER || (target && !target.includes('@g.us') ? target : null);
-    
-    if (adminNumber) {
-        console.log(`🚀 [Report] Redirigiendo reporte a línea oficial YCloud (${adminNumber})...`);
-        return await sendViaYCloud(adminNumber, message);
-    }
-
-    // 2. Fallback: Grupos de WhatsApp (Baileys)
-    if (!groupProvider?.vendor?.user) {
-        console.warn('⚠️ [GroupSender] WhatsApp Grupos no conectado. Intentando Discord si existe...');
-        if (process.env.DISCORD_WEBHOOK_URL) await sendToDiscord(message);
-        return;
+    if (!groupProvider || !groupProvider.vendor?.user) {
+        console.warn('⚠️ [GroupSender] WhatsApp Grupos no conectado. Por favor, escanea el QR.');
+        throw new Error('GroupProvider no conectado.');
     }
 
     const vendor = groupProvider.vendor;
+
     try {
-        console.log(`� [GroupSender] Intentando envío a grupo ${target}...`);
+        console.log(`� [GroupSender] Enviando reporte al grupo ${target}...`);
+        
+        // 1. Despertar la sesión antes de enviar (Crucial para coexistencia)
+        try {
+            if (vendor.presenceSubscribe) await vendor.presenceSubscribe(target);
+            if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('composing', target);
+        } catch (e) {}
+
+        // 2. Envío directo vía Baileys
         await vendor.sendMessage(target, { text: message });
-        console.log(`✅ [GroupSender] Enviado a WhatsApp (Grupo).`);
+        
+        console.log(`✅ [GroupSender] Reporte enviado al grupo.`);
+        
+        try { if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('paused', target); } catch(e){}
     } catch (error: any) {
-        console.error('❌ [GroupSender] Error enviando al grupo WhatsApp.');
-        if (process.env.DISCORD_WEBHOOK_URL) await sendToDiscord(message);
+        const errorMsg = error?.message || String(error);
+        if (errorMsg.includes('No sessions') || errorMsg.includes('SessionError')) {
+            console.error('❌ [GroupSender] Error de Cifrado.');
+            throw new Error('Sincronizando llaves con el grupo... Por favor, envía un mensaje manual al grupo para acelerar la vinculación.');
+        }
         throw error;
     }
 };
 
 export const initGroupSender = async () => {
-    console.log('🔌 [GroupSender] Iniciando Módulo de Reportes...');
+    console.log('🔌 [GroupSender] Cargando motor de grupos (Vinculado a YCloud)...');
 
     try {
         await restoreSessionFromDb('groups');
@@ -123,15 +74,14 @@ export const initGroupSender = async () => {
             groupsIgnore: false,
             readStatus: false,
             disableHttpServer: true,
-            authTimeoutMs: 60000 
+            authTimeoutMs: 120000 // Aumentado a 2 minutos para vinculación estable
         });
 
         groupProvider.on('require_action', async (payload: any) => {
             isGroupReady = false;
-            const qrString = payload?.payload?.qr || payload?.qr || (typeof payload === 'string' ? payload : null);
-
-            if (qrString && qrString.length > 20) {
-                console.log('⚡ [GroupSender] Generando QR de grupos...');
+            const qrString = payload?.payload?.qr || payload?.qr;
+            if (qrString) {
+                console.log('⚡ [GroupSender] QR de grupos listo para escanear.');
                 const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
                 await QRCode.toFile(qrPath, qrString, { scale: 10, margin: 2 });
             }
@@ -139,19 +89,25 @@ export const initGroupSender = async () => {
 
         groupProvider.on('ready', () => {
             if (!isGroupReady) {
-                console.log('✅ [GroupSender] Motor de grupos LISTO.');
+                console.log('✅ [GroupSender] Conexión establecida correctamente.');
                 isGroupReady = true;
                 const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
                 if (fs.existsSync(qrPath)) fs.unlinkSync(qrPath);
             }
         });
 
+        /**
+         * 🟢 ESTO ES LO MÁS IMPORTANTE PARA EL MISMO NÚMERO:
+         * Debemos escuchar eventos pero sin procesarlos, para que Baileys 
+         * reciba internamente las actualizaciones de llaves (prekeys) 
+         * que genera la actividad de YCloud.
+         */
         groupProvider.on('message', (ctx: any) => {
-            // Sincronización silenciosa
+            // Silencio total, solo procesamos llaves en el background
         });
 
         groupProvider.on('auth_failure', (error: any) => {
-            console.error('❌ [GroupSender] Autenticación fallida:', error);
+            console.error('❌ [GroupSender] Falló la autenticación vinculado:', error);
             isGroupReady = false;
         });
 
@@ -162,7 +118,7 @@ export const initGroupSender = async () => {
         startSessionSync('groups');
 
     } catch (err) {
-        console.error('❌ [GroupSender] Error en inicio:', err);
+        console.error('❌ [GroupSender] Error en cargador de grupos:', err);
     }
 
     return groupProvider;
