@@ -9,43 +9,55 @@ export let groupProvider: any; // Tipo any para evitar conflictos de tipos estri
 
 /**
  * Función robusta para enviar mensajes a grupos
- * Maneja reintentos básicos por conexión cerrada
  */
 export const sendToGroup = async (number: string, message: string) => {
     if (!groupProvider) {
+        console.error('❌ [GroupSender] GroupProvider no está instanciado.');
         throw new Error('GroupProvider no inicializado.');
     }
 
-    // Verificar si el vendor interna existe
-    if (!groupProvider.vendor) {
-        console.warn('⚠️ [GroupSender] Vendor no detectado. Intentando inicializar...');
-        await groupProvider.initVendor();
-        await new Promise(res => setTimeout(res, 2000)); // Esperar un poco a que conecte
+    // Verificar estado del vendor (socket de Baileys)
+    const vendor = groupProvider.vendor;
+    
+    if (!vendor || !vendor.user) {
+        console.error('❌ [GroupSender] El socket no está autenticado o conectado (vendor.user is undefined).');
+        throw new Error('Sesión de grupos no conectada. Por favor, escanea el QR de grupos.');
     }
 
     try {
-        console.log(`📤 [GroupSender] Enviando mensaje a ${number}...`);
+        console.log(`📤 [GroupSender] Intentando enviar a ${number}...`);
+        //@ts-ignore
         await groupProvider.sendMessage(number, message, {});
         console.log(`✅ [GroupSender] Mensaje enviado correctamente.`);
     } catch (error: any) {
-        const isConnectionError = error?.message?.includes('Connection Closed') ||
-            error?.message?.includes('closed') ||
-            error?.message?.includes('not open');
+        console.error('❌ [GroupSender] Error en sendMessage:', error);
+        
+        const errorMsg = error?.message || String(error);
+        const isConnectionError = errorMsg.includes('Connection Closed') ||
+            errorMsg.includes('closed') ||
+            errorMsg.includes('not open') ||
+            errorMsg.includes('undefined (reading \'id\')');
 
         if (isConnectionError) {
-            console.warn('⚠️ [GroupSender] Error de conexión detectado. Reintentando en 3 segundos...');
-            await new Promise(res => setTimeout(res, 3000));
+            console.warn('⚠️ [GroupSender] Error de conexión o sesión inválida detectada. Reintentando...');
+            await new Promise(res => setTimeout(res, 2000));
 
-            // Intento de reconexión ligero (initVendor suele ser idempotente o reinicia)
             try {
-                if (groupProvider.initVendor) await groupProvider.initVendor();
+                if (groupProvider.initVendor) {
+                    console.log('[GroupSender] Re-inicializando vendor...');
+                    await groupProvider.initVendor();
+                }
             } catch (e) {
                 console.error('[GroupSender] Error al re-inicializar vendor:', e);
             }
 
-            // Reintento final
-            await groupProvider.sendMessage(number, message, {});
-            console.log(`✅ [GroupSender] Mensaje enviado en reintento.`);
+            // Reintento final si el vendor se recuperó
+            if (groupProvider.vendor && groupProvider.vendor.user) {
+                await groupProvider.sendMessage(number, message, {});
+                console.log(`✅ [GroupSender] Mensaje enviado en reintento.`);
+            } else {
+                throw new Error('No se pudo recuperar la conexión del grupo. Escanee el QR nuevamente.');
+            }
         } else {
             throw error;
         }
@@ -55,47 +67,59 @@ export const sendToGroup = async (number: string, message: string) => {
 export const initGroupSender = async () => {
     console.log('🔌 [GroupSender] Iniciando Proveedor Baileys secundario para Grupos...');
 
-    // 1. Restaurar sesión (usamos 'groups' para separar la sesión de grupos del bot principal)
-    await restoreSessionFromDb('groups');
+    try {
+        // 1. Restaurar sesión (usamos 'groups' para separar la sesión de grupos del bot principal)
+        await restoreSessionFromDb('groups');
 
-    // 2. Crear instancia de Baileys
-    groupProvider = createProvider(BaileysProvider, {
-        groupsIgnore: false,
-        readStatus: false,
-        // No necesitamos servidor HTTP propio para este provider secundario
-    });
+        // 2. Crear instancia de Baileys
+        groupProvider = createProvider(BaileysProvider, {
+            groupsIgnore: false,
+            readStatus: false,
+        });
 
-    // 2.1 Forzar inicialización del Vendor (Socket) ya que no usamos createBot
-    if (typeof groupProvider.initVendor === 'function') {
-        console.log('🔌 [GroupSender] Inicializando vendor manualmente...');
-        await (groupProvider as any).initVendor();
-    }
+        // 3. Manejo de eventos para diagnóstico
+        groupProvider.on('require_action', async (payload: any) => {
+            console.log(`[GroupSender] Evento require_action recibido a las ${new Date().toLocaleTimeString()}`);
+            let qrString = null;
+            if (typeof payload === 'string') qrString = payload;
+            else if (payload?.qr) qrString = payload.qr;
+            else if (payload?.code) qrString = payload.code;
 
-    // 3. Manejo de QR específico para este provider
-    groupProvider.on('require_action', async (payload: any) => {
-        let qrString = null;
-        if (typeof payload === 'string') qrString = payload;
-        else if (payload?.qr) qrString = payload.qr;
-        else if (payload?.code) qrString = payload.code;
-
-        if (qrString) {
-            console.log('⚡ [GroupSender] QR generado. Nombre: bot.groups.qr.png');
-            try {
+            if (qrString) {
+                console.log('⚡ [GroupSender] Generando imagen QR: bot.groups.qr.png');
                 const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
                 await QRCode.toFile(qrPath, qrString, { scale: 4, margin: 2 });
-                console.log(`✅ [GroupSender] QR imagen guardada en: ${qrPath}`);
-            } catch (err) {
-                console.error('❌ [GroupSender] Error generando imagen QR:', err);
+                console.log(`✅ [GroupSender] QR guardado en: ${qrPath}`);
             }
+        });
+
+        groupProvider.on('ready', () => {
+            console.log('✅ [GroupSender] Conexión establecida. El bot de grupos está LISTO.');
+            // Eliminar QR viejo si existe al conectar
+            const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
+            if (fs.existsSync(qrPath)) {
+                fs.unlinkSync(qrPath);
+                console.log('[GroupSender] QR temporal de grupos eliminado.');
+            }
+        });
+
+        groupProvider.on('auth_failure', (error: any) => {
+            console.error('❌ [GroupSender] Error de autenticación:', error);
+        });
+
+        // 4. Forzar inicialización del Vendor (Socket)
+        if (typeof groupProvider.initVendor === 'function') {
+            console.log('🔌 [GroupSender] Ejecutando initVendor() manualmente...');
+            await groupProvider.initVendor();
+            console.log('🔌 [GroupSender] Llamada a initVendor() terminada. Esperando eventos...');
         }
-    });
 
-    groupProvider.on('ready', () => {
-        console.log('✅ [GroupSender] Provider de Grupos conectado y listo.');
-    });
+        // 5. Iniciar sincronización de sesión
+        startSessionSync('groups');
 
-    // 4. Iniciar sincronización de sesión
-    startSessionSync('groups');
+    } catch (err) {
+        console.error('❌ [GroupSender] Error crítico durante la inicialización:', err);
+    }
 
     return groupProvider;
 };

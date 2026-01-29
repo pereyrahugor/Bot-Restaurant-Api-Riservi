@@ -50,9 +50,21 @@ export const userLocks = new Map();
 
 // Función auxiliar para verificar si existe sesión activa (Local o Remota)
 // Función auxiliar para verifica estado (API)
+// Función auxiliar para verificar el estado de las conexiones
 const hasActiveSession = async () => {
-  // Con YCloud (API), la sesión se considera "siempre activa" si hay API Key.
-  return { active: true, source: 'ycloud-api' };
+  // 1. Estado de YCloud (Principal)
+  const ycloudActive = !!process.env.YCLOUD_API_KEY && !!process.env.YCLOUD_WABA_NUMBER;
+  
+  // 2. Estado de Grupos (Secundario)
+  const { groupProvider } = await import('./utils/groupSender');
+  const groupsActive = groupProvider?.vendor?.user ? true : false;
+
+  return { 
+    active: ycloudActive, 
+    source: 'ycloud-api',
+    groupsConnected: groupsActive,
+    message: groupsActive ? '✅ Todo operativo' : '⚠️ Grupos desconectados (Escanea el QR)'
+  };
 };
 
 const adapterProvider = createProvider(YCloudProvider, {});
