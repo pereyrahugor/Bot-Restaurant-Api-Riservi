@@ -29,28 +29,18 @@ export const sendToGroup = async (number: string, message: string) => {
     }
 
     try {
-        console.log(`📤 [GroupSender] Preparando canal cifrado para ${number}...`);
+        console.log(`📤 [GroupSender] Preparando canal para ${number}...`);
         
+        // 1. Asegurar presencia para despertar el socket
         try {
-            // RECETA PARA FORZAR CIFRADO:
             if (vendor.presenceSubscribe) await vendor.presenceSubscribe(number);
-            
-            // Forzar carga de participantes para obtener sus llaves públicas e2e
-            if (vendor.groupMetadata) {
-                const metadata = await vendor.groupMetadata(number);
-                console.log(`[GroupSender] Sincronizando con ${metadata.participants?.length} participantes...`);
-            }
-
             if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('composing', number);
-            
-            // Pausa estratégica para que Baileys procese la sincronización de llaves en el background
-            await new Promise(res => setTimeout(res, 2000));
-        } catch (e: any) {
-            console.warn(`[GroupSender] Aviso en sincronización (pre-envío):`, e.message);
-        }
+        } catch (e) {}
 
-        //@ts-ignore
-        await groupProvider.sendMessage(number, message, {});
+        // 2. ENVÍO DIRECTO (Native Baileys)
+        // Usamos el motor nativo porque gestiona mejor las colas de cifrado en grupos
+        await vendor.sendMessage(number, { text: message });
+        
         console.log(`✅ [GroupSender] Mensaje enviado al grupo.`);
         
         try { if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('paused', number); } catch(e){}
@@ -59,7 +49,16 @@ export const sendToGroup = async (number: string, message: string) => {
         
         if (errorMsg.includes('No sessions') || errorMsg.includes('SessionError')) {
             console.error('❌ [GroupSender] Error de Cifrado (No sessions).');
-            throw new Error('El cifrado de grupos está sincronizándose. Por favor, asegúrate de que el bot sea ADMINISTRADOR del grupo y que alguien haya escrito en él recientemente.');
+            // Intentar un reintento simple tras un pequeño delay
+            console.log('[GroupSender] Reintentando envío en 2s...');
+            await new Promise(res => setTimeout(res, 2000));
+            try {
+                await vendor.sendMessage(number, { text: message });
+                console.log(`✅ [GroupSender] Enviado tras reintento.`);
+                return;
+            } catch (retryErr) {
+                throw new Error('El cifrado de grupos está tardando en sincronizar. Por favor, mantén el bot conectado y espera unos minutos.');
+            }
         }
 
         const isConnectionError = errorMsg.includes('Connection Closed') ||
@@ -122,6 +121,12 @@ export const initGroupSender = async () => {
                 const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
                 if (fs.existsSync(qrPath)) fs.unlinkSync(qrPath);
             }
+        });
+
+        // IMPORTANTE: Un listener aunque sea vacío obliga a Baileys a procesar 
+        // paquetes de seguridad (llaves) recibidos del servidor.
+        groupProvider.on('message', (ctx: any) => {
+            // No hacemos nada, solo mantenemos el canal de sincronización abierto
         });
 
         groupProvider.on('auth_failure', (error: any) => {
