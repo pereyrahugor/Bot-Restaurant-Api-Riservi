@@ -29,36 +29,43 @@ export const sendToGroup = async (number: string, message: string) => {
     }
 
     try {
-        console.log(`📤 [GroupSender] Preparando canal para ${number}...`);
+        const botId = vendor.user.id.split(':')[0];
+        console.log(`📤 [GroupSender] Identidad del Bot: ${botId}. Preparando envío a grupo...`);
         
-        // 1. Asegurar presencia para despertar el socket
         try {
-            if (vendor.presenceSubscribe) await vendor.presenceSubscribe(number);
+            // ESTRATEGIA DEFINITIVA PARA 'No sessions':
+            // 1. Obtener miembros del grupo
+            const metadata = await vendor.groupMetadata(number);
+            const participants = metadata.participants.map(p => p.id);
+            
+            console.log(`[GroupSender] Sincronizando llaves e2e para ${participants.length} participantes...`);
+            
+            // 2. Forzar al bot a "ver" a los participantes. 
+            // Esto puebla el almacén de llaves (store) de Baileys.
+            if (vendor.onWhatsApp) {
+                // Solo los primeros 5 miembros para no saturar, suele ser suficiente para despertar el cifrado
+                await vendor.onWhatsApp(...participants.slice(0, 5));
+            }
+            
             if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('composing', number);
-        } catch (e) {}
+            await new Promise(res => setTimeout(res, 2000));
+        } catch (e: any) {
+            console.warn(`[GroupSender] Aviso en pre-sincronización:`, e.message);
+        }
 
-        // 2. ENVÍO DIRECTO (Native Baileys)
-        // Usamos el motor nativo porque gestiona mejor las colas de cifrado en grupos
+        // 3. ENVÍO NATIVO
         await vendor.sendMessage(number, { text: message });
         
-        console.log(`✅ [GroupSender] Mensaje enviado al grupo.`);
+        console.log(`✅ [GroupSender] Mensaje enviado exitosamente.`);
         
         try { if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('paused', number); } catch(e){}
     } catch (error: any) {
         const errorMsg = error?.message || String(error);
         
         if (errorMsg.includes('No sessions') || errorMsg.includes('SessionError')) {
-            console.error('❌ [GroupSender] Error de Cifrado (No sessions).');
-            // Intentar un reintento simple tras un pequeño delay
-            console.log('[GroupSender] Reintentando envío en 2s...');
-            await new Promise(res => setTimeout(res, 2000));
-            try {
-                await vendor.sendMessage(number, { text: message });
-                console.log(`✅ [GroupSender] Enviado tras reintento.`);
-                return;
-            } catch (retryErr) {
-                throw new Error('El cifrado de grupos está tardando en sincronizar. Por favor, mantén el bot conectado y espera unos minutos.');
-            }
+            console.error('❌ [GroupSender] Error Crítico de Cifrado.');
+            console.log('💡 Tip: Asegúrate de que el número del bot NO tenga chats archivados o bloqueados con miembros de este grupo.');
+            throw new Error('Sincronizando seguridad del grupo... Por favor, intenta de nuevo en 10 segundos.');
         }
 
         const isConnectionError = errorMsg.includes('Connection Closed') ||
