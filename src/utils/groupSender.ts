@@ -89,12 +89,12 @@ export const initGroupSender = async () => {
             // Intento de captura de QR en diferentes estructuras posibles
             if (typeof payload === 'string' && payload.length > 20) {
                 qrString = payload;
+            } else if (payload?.payload?.qr) { // Caso específico detectado en logs de Railway
+                qrString = payload.payload.qr;
             } else if (payload?.qr) {
                 qrString = payload.qr;
-            } else if (payload?.code) {
-                qrString = payload.code;
-            } else if (payload?.instructions?.qr) {
-                qrString = payload.instructions.qr;
+            } else if (payload?.payload?.code) {
+                qrString = payload.payload.code;
             }
 
             if (qrString) {
