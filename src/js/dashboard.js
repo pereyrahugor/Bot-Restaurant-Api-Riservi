@@ -12,12 +12,18 @@ async function fetchStatus() {
             qrSection.style.display = 'none';
             sessionInfo.style.display = '';
 
+            const groupsStatusEl = document.getElementById('groups-status');
             if (data.source === 'ycloud-api') {
                 statusEl.textContent = '✅ Conectado vía YCloud';
-                sessionInfo.textContent = data.groupsConnected ?
-                    'El bot está operando por API y los grupos están CONECTADOS.' :
-                    'El bot está operando por API, pero los grupos están DESCONECTADOS.';
-                sessionInfo.style.color = data.groupsConnected ? '#28a745' : '#ffc107';
+                sessionInfo.textContent = 'El bot está operando por API (YCloud).';
+                sessionInfo.style.color = '#28a745';
+
+                if (groupsStatusEl) {
+                    groupsStatusEl.textContent = data.groupsConnected ?
+                        '✅ El bot está operando por API y los grupos están CONECTADOS.' :
+                        '❌ El bot está operando por API, pero los grupos están DESCONECTADOS (Escanea el QR).';
+                    groupsStatusEl.style.color = data.groupsConnected ? '#28a745' : '#ffc107';
+                }
             } else if (data.source === 'connected') {
                 statusEl.textContent = '✅ Conectado y Operativo';
                 sessionInfo.textContent = 'El bot está vinculado a WhatsApp y funcionando correctamente.';

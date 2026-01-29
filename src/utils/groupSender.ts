@@ -21,8 +21,10 @@ export const sendToGroup = async (number: string, message: string) => {
     
     if (!vendor || !vendor.user) {
         console.error('❌ [GroupSender] El socket no está autenticado o conectado (vendor.user is undefined).');
-        throw new Error('Sesión de grupos no conectada. Por favor, escanea el QR de grupos.');
+        throw new Error('Sesión de grupos no conectada. Por favor, escanea el QR de grupos en /groups-qr.png');
     }
+
+    console.log(`[GroupSender] Info de sesión: Conectado como ${vendor.user.id || 'ID desconocido'}`);
 
     try {
         console.log(`📤 [GroupSender] Intentando enviar a ${number}...`);
@@ -36,10 +38,12 @@ export const sendToGroup = async (number: string, message: string) => {
         const isConnectionError = errorMsg.includes('Connection Closed') ||
             errorMsg.includes('closed') ||
             errorMsg.includes('not open') ||
-            errorMsg.includes('undefined (reading \'id\')');
+            errorMsg.includes('undefined (reading \'id\')') ||
+            errorMsg.includes('No sessions') ||
+            errorMsg.includes('SessionError');
 
         if (isConnectionError) {
-            console.warn('⚠️ [GroupSender] Error de conexión o sesión inválida detectada. Reintentando...');
+            console.warn('⚠️ [GroupSender] Error de sesión o conexión detectado. Reintentando...');
             await new Promise(res => setTimeout(res, 2000));
 
             try {
