@@ -467,7 +467,7 @@ const main = async () => {
   app.use("/style", serve(path.join(process.cwd(), "src", "style")));
   app.use("/assets", serve(path.join(process.cwd(), "src", "assets")));
 
-  // Servir el código QR
+  // Servir el código QR principal
   app.get("/qr.png", (req, res) => {
     const qrPath = path.join(process.cwd(), 'bot.qr.png');
     if (fs.existsSync(qrPath)) {
@@ -476,6 +476,18 @@ const main = async () => {
     } else {
       res.statusCode = 404;
       res.end('QR not found');
+    }
+  });
+
+  // Servir el código QR de Grupos
+  app.get("/groups-qr.png", (req, res) => {
+    const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
+    if (fs.existsSync(qrPath)) {
+      res.setHeader('Content-Type', 'image/png');
+      fs.createReadStream(qrPath).pipe(res);
+    } else {
+      res.statusCode = 404;
+      res.end('Groups QR not found');
     }
   });
 

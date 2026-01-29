@@ -55,8 +55,8 @@ export const sendToGroup = async (number: string, message: string) => {
 export const initGroupSender = async () => {
     console.log('🔌 [GroupSender] Iniciando Proveedor Baileys secundario para Grupos...');
 
-    // 1. Restaurar sesión (usamos 'default' para intentar recuperar la sesión anterior si existe)
-    await restoreSessionFromDb();
+    // 1. Restaurar sesión (usamos 'groups' para separar la sesión de grupos del bot principal)
+    await restoreSessionFromDb('groups');
 
     // 2. Crear instancia de Baileys
     groupProvider = createProvider(BaileysProvider, {
@@ -95,7 +95,7 @@ export const initGroupSender = async () => {
     });
 
     // 4. Iniciar sincronización de sesión
-    startSessionSync();
+    startSessionSync('groups');
 
     return groupProvider;
 };
