@@ -4,7 +4,8 @@ import fs from 'fs';
 import path from 'path';
 
 // Configuración
-const SESSION_DIR = 'bot_sessions';
+// El directorio base depende del sessionId para evitar colisiones
+const getSessionDir = (sessionId: string) => sessionId === 'groups' ? 'groups_sessions' : 'bot_sessions';
 const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 Hora
 
 const supabaseUrl = process.env.SUPABASE_URL!;
@@ -23,9 +24,10 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 export async function restoreSessionFromDb(sessionId: string = 'default') {
     console.log(`[SessionSync] 📥 Restaurando sesión '${sessionId}' para proyecto '${projectId}'...`);
 
+    const sessionDir = getSessionDir(sessionId);
     try {
-        if (!fs.existsSync(SESSION_DIR)) {
-            fs.mkdirSync(SESSION_DIR, { recursive: true });
+        if (!fs.existsSync(sessionDir)) {
+            fs.mkdirSync(sessionDir, { recursive: true });
         }
 
         const { data, error } = await supabase.rpc('get_whatsapp_session', {
@@ -53,7 +55,7 @@ export async function restoreSessionFromDb(sessionId: string = 'default') {
             const filesMap = backupRow.data; // { "file.json": content, ... }
 
             for (const [fileName, fileContent] of Object.entries(filesMap)) {
-                const filePath = path.join(SESSION_DIR, fileName);
+                const filePath = path.join(sessionDir, fileName);
                 // Escribir contenido (stringify porque es objeto en memoria)
                 fs.writeFileSync(filePath, JSON.stringify(fileContent, null, 2));
                 count++;
@@ -65,7 +67,7 @@ export async function restoreSessionFromDb(sessionId: string = 'default') {
                 if (row.key_id === 'full_backup') continue;
 
                 const fileName = `${row.key_id}.json`;
-                const filePath = path.join(SESSION_DIR, fileName);
+                const filePath = path.join(sessionDir, fileName);
                 const fileContent = JSON.stringify(row.data, null, 2);
                 fs.writeFileSync(filePath, fileContent);
                 count++;
@@ -123,10 +125,11 @@ export function startSessionSync(sessionId: string = 'default') {
 }
 
 async function syncToDb(sessionId: string) {
+    const sessionDir = getSessionDir(sessionId);
     try {
-        if (!fs.existsSync(SESSION_DIR)) return;
+        if (!fs.existsSync(sessionDir)) return;
 
-        const files = fs.readdirSync(SESSION_DIR);
+        const files = fs.readdirSync(sessionDir);
         const sessionFiles = files.filter(f => f.endsWith('.json'));
 
         if (sessionFiles.length === 0) return;
@@ -135,7 +138,7 @@ async function syncToDb(sessionId: string) {
         let corruptCount = 0;
 
         for (const file of sessionFiles) {
-            const filePath = path.join(SESSION_DIR, file);
+            const filePath = path.join(sessionDir, file);
             const content = fs.readFileSync(filePath, 'utf-8');
             let jsonContent;
 

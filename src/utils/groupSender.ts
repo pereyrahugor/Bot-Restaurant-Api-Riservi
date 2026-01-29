@@ -34,12 +34,12 @@ export const sendToGroup = async (number: string, message: string) => {
         if (errorMsg.includes('No sessions') || errorMsg.includes('SessionError')) {
             console.error('❌ [GroupSender] Error Crítico: Sesión corrupta (No sessions). Forzando limpieza local...');
             
-            // Intentar borrar bot_sessions localmente para forzar QR en el siguiente reinicio
+            // Intentar borrar groups_sessions localmente para forzar QR en el siguiente reinicio
             try {
-                const sessionsDir = path.join(process.cwd(), 'bot_sessions');
+                const sessionsDir = path.join(process.cwd(), 'groups_sessions');
                 if (fs.existsSync(sessionsDir)) {
                     fs.rmSync(sessionsDir, { recursive: true, force: true });
-                    console.log('✅ [GroupSender] Carpeta bot_sessions eliminada preventivamente.');
+                    console.log('✅ [GroupSender] Carpeta groups_sessions eliminada preventivamente.');
                 }
             } catch (e) {
                 console.error('[GroupSender] No se pudo limpiar la carpeta local:', e);
@@ -84,6 +84,12 @@ export const initGroupSender = async () => {
             groupsIgnore: false,
             readStatus: false,
             disableHttpServer: true,
+            // Aislamiento de carpeta
+            //@ts-ignore
+            basePath: 'groups_sessions',
+            // Parches de estabilidad
+            //@ts-ignore
+            patchMessageBeforeSending: true
         });
 
         groupProvider.on('require_action', async (payload: any) => {

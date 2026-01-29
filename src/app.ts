@@ -519,13 +519,15 @@ const main = async () => {
   app.post('/api/delete-session', async (req, res) => {
     try {
       console.log('[API] Solicitud de eliminación de sesión recibida.');
-      const sessionsDir = path.join(process.cwd(), 'bot_sessions');
-      
       // 1. Eliminar sesión local del GroupSender
-      if (fs.existsSync(sessionsDir)) {
-        console.log('[API] Eliminando directorio local:', sessionsDir);
-        fs.rmSync(sessionsDir, { recursive: true, force: true });
-      }
+      const sessionDirs = ['bot_sessions', 'groups_sessions'];
+      sessionDirs.forEach(dir => {
+        const p = path.join(process.cwd(), dir);
+        if (fs.existsSync(p)) {
+          console.log('[API] Eliminando directorio local:', p);
+          fs.rmSync(p, { recursive: true, force: true });
+        }
+      });
 
       // 1.1 Eliminar QRs antiguos
       ['bot.qr.png', 'bot.groups.qr.png'].forEach(file => {
