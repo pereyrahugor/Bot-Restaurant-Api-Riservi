@@ -62,11 +62,25 @@ app.post('/webhook', (req, res) => {
 La API de Meta tiene restricciones para enviar mensajes a grupos. Por ello, mantenemos una instancia secundaria de Baileys exclusivamente para esta función.
 
 1.  Copia el archivo `src/utils/groupSender.ts`.
-2.  Importa e inicializa en `main()`:
+2.  Importa e inicializa en `main()` (dentro de `app.ts`, antes de crear el bot):
     ```typescript
     await initGroupSender(); 
     ```
     *(Esto iniciará la sincronización de sesión y generará `bot.groups.qr.png` si es necesario).*
+3.  **Importante al usar `groupProvider` en Flujos**:
+    Para evitar problemas de instancias `undefined`, importa siempre el provider usando **rutas relativas** (ej: `../utils/groupSender`) y **no alias** (ej: evita `~/utils/groupSender` o `@/utils/groupSender` si tu transpilador no garantiza Singletons).
+    
+    Además, valida siempre la existencia del método antes de llamar:
+    ```typescript
+    import { groupProvider } from '../utils/groupSender';
+
+    // ... dentro de tu acción ...
+    if (groupProvider && typeof groupProvider.sendMessage === 'function') {
+        await groupProvider.sendMessage(ID_GRUPO_RESUMEN, mensaje, {});
+    } else {
+        console.error("Provider de Grupos no disponible");
+    }
+    ```
 
 ## 4. Configuración en YCloud
 

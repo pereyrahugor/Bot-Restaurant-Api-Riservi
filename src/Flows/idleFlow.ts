@@ -12,9 +12,9 @@ const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_RESUMEN ?? '';
 const msjCierre: string = process.env.msjCierre as string;
 
 //** Flow para cierre de conversación, generación de resumen y envio a grupo de WS */
-import { groupProvider } from '~/utils/groupSender'; // Importar el provider secundario
+import { groupProvider } from '../utils/groupSender'; // Importar provider secundario con ruta relativa
 
-//** Flow para cierre de conversación, generación de resumen y envio a grupo de WS */
+//** Variables de entorno para el envio de msj de resumen a grupo de WS */
 const idleFlow = addKeyword(EVENTS.ACTION).addAction(
     async (ctx, { endFlow, provider, state }) => {
         console.log("Ejecutando idleFlow...");
@@ -81,11 +81,15 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                 {
                     const resumenConLink = `${resumen}\n\n🔗 [Chat del usuario](${data.linkWS})`;
                     try {
-                        if (groupProvider) {
+                        console.log('[DEBUG] Intentando enviar a grupo...');
+                        console.log('[DEBUG] groupProvider type:', typeof groupProvider);
+                        console.log('[DEBUG] groupProvider keys:', groupProvider ? Object.keys(groupProvider) : 'null');
+
+                        if (groupProvider && typeof groupProvider.sendMessage === 'function') {
                             await groupProvider.sendMessage(ID_GRUPO_RESUMEN, resumenConLink, {});
                             console.log(`✅ SI_RESUMEN: Resumen enviado a ${ID_GRUPO_RESUMEN} vía Baileys`);
                         } else {
-                            console.error(`❌ Error: groupProvider (Baileys) no está inicializado.`);
+                            console.error(`❌ Error: groupProvider no está listo o no es válido. Estado: ${groupProvider ? 'Objeto presente' : 'Undefined/Null'}`);
                         }
                     } catch (err) {
                         console.error(`❌ SI_RESUMEN: No se pudo enviar el resumen al grupo ${ID_GRUPO_RESUMEN}:`, err?.message || err);
