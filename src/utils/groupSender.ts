@@ -31,36 +31,35 @@ export const sendToGroup = async (number: string, message: string) => {
     try {
         console.log(`📤 [GroupSender] Preparando canal cifrado para ${number}...`);
         
-        // RECETA PARA FORZAR CIFRADO:
-        // 1. Suscribirse a la presencia del grupo
-        // 2. Obtener metadatos actualizados
-        // 3. Simular que el bot está 'componiendo' mensaje
-        // Estos pasos obligan a Baileys/WhatsApp a validar las llaves de los participantes.
         try {
+            // RECETA PARA FORZAR CIFRADO:
             if (vendor.presenceSubscribe) await vendor.presenceSubscribe(number);
-            if (vendor.groupMetadata) await vendor.groupMetadata(number);
+            
+            // Forzar carga de participantes para obtener sus llaves públicas e2e
+            if (vendor.groupMetadata) {
+                const metadata = await vendor.groupMetadata(number);
+                console.log(`[GroupSender] Sincronizando con ${metadata.participants?.length} participantes...`);
+            }
+
             if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('composing', number);
             
-            // Pequeña espera para que la sincronización de llaves ocurra
-            await new Promise(res => setTimeout(res, 1000));
-            console.log(`[GroupSender] Canal sincronizado.`);
+            // Pausa estratégica para que Baileys procese la sincronización de llaves en el background
+            await new Promise(res => setTimeout(res, 2000));
         } catch (e: any) {
             console.warn(`[GroupSender] Aviso en sincronización (pre-envío):`, e.message);
         }
 
         //@ts-ignore
         await groupProvider.sendMessage(number, message, {});
-        console.log(`✅ [GroupSender] Mensaje enviado.`);
+        console.log(`✅ [GroupSender] Mensaje enviado al grupo.`);
         
-        // Detener el estado de 'componiendo'
         try { if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('paused', number); } catch(e){}
     } catch (error: any) {
         const errorMsg = error?.message || String(error);
         
         if (errorMsg.includes('No sessions') || errorMsg.includes('SessionError')) {
             console.error('❌ [GroupSender] Error de Cifrado (No sessions).');
-            console.log('[GroupSender] Sugerencia: El bot necesita que el administrador del grupo lo salude o que alguien escriba en el grupo para refrescar llaves.');
-            throw new Error('Error de cifrado en el grupo. Intenta escribir algo manualmente en el grupo desde el móvil del bot.');
+            throw new Error('El cifrado de grupos está sincronizándose. Por favor, asegúrate de que el bot sea ADMINISTRADOR del grupo y que alguien haya escrito en él recientemente.');
         }
 
         const isConnectionError = errorMsg.includes('Connection Closed') ||
