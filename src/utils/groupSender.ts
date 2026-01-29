@@ -9,109 +9,125 @@ export let groupProvider: any;
 let isGroupReady = false;
 
 /**
- * Función robusta para enviar mensajes a grupos
+ * Función para enviar a Discord (Fallback opcional)
  */
-export const sendToGroup = async (number: string, message: string) => {
-    if (!groupProvider) {
-        throw new Error('GroupProvider no inicializado.');
+export const sendToDiscord = async (message: string) => {
+    const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+    if (!webhookUrl) return false;
+
+    try {
+        await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                content: '📊 **Nuevo Resumen de Reserva**',
+                embeds: [{
+                    description: message,
+                    color: 5814783
+                }]
+            })
+        });
+        console.log('✅ [Discord] Resumen enviado correctamente.');
+        return true;
+    } catch (e) {
+        console.error('❌ [Discord] Error enviando webhook:', e);
+        return false;
+    }
+};
+
+/**
+ * Función para enviar vía API Oficial de YCloud (Máxima fiabilidad)
+ * Ideal para enviar resúmenes a números personales desde la línea del bot.
+ */
+export const sendViaYCloud = async (to: string, message: string) => {
+    const apiKey = process.env.YCLOUD_API_KEY;
+    const from = process.env.YCLOUD_WABA_NUMBER;
+    
+    if (!apiKey || !from) {
+        console.error('❌ [YCloud-Report] Faltan credenciales YCLOUD_API_KEY o YCLOUD_WABA_NUMBER');
+        return false;
+    }
+
+    const cleanNumber = to.replace(/\D/g, '');
+
+    try {
+        const response = await fetch('https://api.ycloud.com/v2/whatsapp/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': apiKey
+            },
+            body: JSON.stringify({
+                from,
+                to: cleanNumber,
+                type: 'text',
+                text: { body: message }
+            })
+        });
+
+        const data = await response.json();
+        if (response.ok) {
+            console.log(`✅ [YCloud-Report] Resumen enviado oficialmente a ${cleanNumber}`);
+            return true;
+        } else {
+            console.error('❌ [YCloud-Report] Falló el envío oficial:', data);
+            return false;
+        }
+    } catch (e) {
+        console.error('❌ [YCloud-Report] Error en petición API:', e);
+        return false;
+    }
+};
+
+/**
+ * Función principal para envío de resúmenes.
+ * Decide automáticamente si usar YCloud (para números) o Baileys (para grupos).
+ */
+export const sendToGroup = async (target: string, message: string) => {
+    // 1. Prioridad: Determinar si usamos la línea oficial (YCloud)
+    // Se usa si target es un número común o si existe REPORT_PHONE_NUMBER
+    const adminNumber = process.env.REPORT_PHONE_NUMBER || (target && !target.includes('@g.us') ? target : null);
+    
+    if (adminNumber) {
+        console.log(`🚀 [Report] Redirigiendo reporte a línea oficial YCloud (${adminNumber})...`);
+        return await sendViaYCloud(adminNumber, message);
+    }
+
+    // 2. Fallback: Grupos de WhatsApp (Baileys)
+    if (!groupProvider?.vendor?.user) {
+        console.warn('⚠️ [GroupSender] WhatsApp Grupos no conectado. Intentando Discord si existe...');
+        if (process.env.DISCORD_WEBHOOK_URL) await sendToDiscord(message);
+        return;
     }
 
     const vendor = groupProvider.vendor;
-    
-    if (!vendor || !vendor.user) {
-        throw new Error('Sesión de grupos no conectada. Por favor, escanea el QR en /groups-qr.png');
-    }
-
-    // Esperar un momento si acaba de conectar
-    if (!isGroupReady) {
-        console.log('[GroupSender] El bot aún se está sincronizando... esperando 3s.');
-        await new Promise(res => setTimeout(res, 3000));
-    }
-
     try {
-        const botId = vendor.user.id.split(':')[0];
-        console.log(`📤 [GroupSender] Identidad del Bot: ${botId}. Preparando envío a grupo...`);
-        
-        try {
-            // ESTRATEGIA DEFINITIVA PARA 'No sessions':
-            // 1. Obtener miembros del grupo
-            const metadata = await vendor.groupMetadata(number);
-            const participants = metadata.participants.map(p => p.id);
-            
-            console.log(`[GroupSender] Sincronizando llaves e2e para ${participants.length} participantes...`);
-            
-            // 2. Forzar al bot a "ver" a los participantes. 
-            // Esto puebla el almacén de llaves (store) de Baileys.
-            if (vendor.onWhatsApp) {
-                // Solo los primeros 5 miembros para no saturar, suele ser suficiente para despertar el cifrado
-                await vendor.onWhatsApp(...participants.slice(0, 5));
-            }
-            
-            if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('composing', number);
-            await new Promise(res => setTimeout(res, 2000));
-        } catch (e: any) {
-            console.warn(`[GroupSender] Aviso en pre-sincronización:`, e.message);
-        }
-
-        // 3. ENVÍO NATIVO
-        await vendor.sendMessage(number, { text: message });
-        
-        console.log(`✅ [GroupSender] Mensaje enviado exitosamente.`);
-        
-        try { if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('paused', number); } catch(e){}
+        console.log(`� [GroupSender] Intentando envío a grupo ${target}...`);
+        await vendor.sendMessage(target, { text: message });
+        console.log(`✅ [GroupSender] Enviado a WhatsApp (Grupo).`);
     } catch (error: any) {
-        const errorMsg = error?.message || String(error);
-        
-        if (errorMsg.includes('No sessions') || errorMsg.includes('SessionError')) {
-            console.error('❌ [GroupSender] Error Crítico de Cifrado.');
-            console.log('💡 Tip: Asegúrate de que el número del bot NO tenga chats archivados o bloqueados con miembros de este grupo.');
-            throw new Error('Sincronizando seguridad del grupo... Por favor, intenta de nuevo en 10 segundos.');
-        }
-
-        const isConnectionError = errorMsg.includes('Connection Closed') ||
-            errorMsg.includes('closed') ||
-            errorMsg.includes('not open') ||
-            errorMsg.includes('undefined (reading \'id\')');
-
-        if (isConnectionError) {
-            console.warn('⚠️ [GroupSender] Error de conexión. Reintentando...');
-            
-            try {
-                if (groupProvider.initVendor) await groupProvider.initVendor();
-                await new Promise(res => setTimeout(res, 3000));
-                
-                if (groupProvider.vendor?.user) {
-                    await groupProvider.sendMessage(number, message, {});
-                    console.log(`✅ [GroupSender] Enviado tras recuperar conexión.`);
-                    return;
-                }
-            } catch (e) {
-                console.error('[GroupSender] Falló el reintento de envío:', e);
-            }
-        }
+        console.error('❌ [GroupSender] Error enviando al grupo WhatsApp.');
+        if (process.env.DISCORD_WEBHOOK_URL) await sendToDiscord(message);
         throw error;
     }
 };
 
 export const initGroupSender = async () => {
-    console.log('🔌 [GroupSender] Iniciando Proveedor Baileys secundario para Grupos...');
+    console.log('🔌 [GroupSender] Iniciando Módulo de Reportes...');
 
     try {
         await restoreSessionFromDb('groups');
 
-        // 2. Crear instancia de Baileys estándar con versión forzada
-        // 2. Restaurar createProvider con configuración estándar para evitar crash
         groupProvider = createProvider(BaileysProvider, {
             version: [2, 3000, 1030817285],
             groupsIgnore: false,
             readStatus: false,
             disableHttpServer: true,
-            //@ts-ignore - Aumentar timeout para evitar cierres prematuros durante QR
             authTimeoutMs: 60000 
         });
 
         groupProvider.on('require_action', async (payload: any) => {
-            isGroupReady = false; // Si pide QR, ya no está listo
+            isGroupReady = false;
             const qrString = payload?.payload?.qr || payload?.qr || (typeof payload === 'string' ? payload : null);
 
             if (qrString && qrString.length > 20) {
@@ -123,17 +139,15 @@ export const initGroupSender = async () => {
 
         groupProvider.on('ready', () => {
             if (!isGroupReady) {
-                console.log('✅ [GroupSender] Conexión establecida. LISTO.');
+                console.log('✅ [GroupSender] Motor de grupos LISTO.');
                 isGroupReady = true;
                 const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
                 if (fs.existsSync(qrPath)) fs.unlinkSync(qrPath);
             }
         });
 
-        // IMPORTANTE: Un listener aunque sea vacío obliga a Baileys a procesar 
-        // paquetes de seguridad (llaves) recibidos del servidor.
         groupProvider.on('message', (ctx: any) => {
-            // No hacemos nada, solo mantenemos el canal de sincronización abierto
+            // Sincronización silenciosa
         });
 
         groupProvider.on('auth_failure', (error: any) => {
