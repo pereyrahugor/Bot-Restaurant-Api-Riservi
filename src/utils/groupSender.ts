@@ -22,30 +22,37 @@ export const sendToGroup = async (number: string, message: string) => {
         throw new Error('Sesión de grupos no conectada. Por favor, escanea el QR en /groups-qr.png');
     }
 
+    // Esperar un momento si acaba de conectar
+    if (!isGroupReady) {
+        console.log('[GroupSender] El bot aún se está sincronizando... esperando 3s.');
+        await new Promise(res => setTimeout(res, 3000));
+    }
+
     try {
-        console.log(`📤 [GroupSender] Enviando a ${number}...`);
+        console.log(`📤 [GroupSender] Validando grupo y enviando a ${number}...`);
+        
+        // FORZAR SINCRONIZACIÓN DE LLAVES: 
+        // Consultar los metadatos del grupo antes de enviar suele solucionar el error 'No sessions'
+        // ya que obliga a Baileys a obtener las llaves de los participantes.
+        try {
+            if (vendor.groupMetadata) {
+                await vendor.groupMetadata(number);
+                console.log(`[GroupSender] Metadatos del grupo obtenidos correctamente.`);
+            }
+        } catch (e: any) {
+            console.warn(`[GroupSender] No se pudieron obtener metadatos (podría ser normal):`, e.message);
+        }
+
         //@ts-ignore
         await groupProvider.sendMessage(number, message, {});
         console.log(`✅ [GroupSender] Mensaje enviado.`);
     } catch (error: any) {
         const errorMsg = error?.message || String(error);
         
-        // El error 'No sessions' es crítico: significa que los archivos de sesión están dañados.
         if (errorMsg.includes('No sessions') || errorMsg.includes('SessionError')) {
-            console.error('❌ [GroupSender] Error Crítico: Sesión corrupta (No sessions). Forzando limpieza local...');
-            
-            // Intentar borrar groups_sessions localmente para forzar QR en el siguiente reinicio
-            try {
-                const sessionsDir = path.join(process.cwd(), 'groups_sessions');
-                if (fs.existsSync(sessionsDir)) {
-                    fs.rmSync(sessionsDir, { recursive: true, force: true });
-                    console.log('✅ [GroupSender] Carpeta groups_sessions eliminada preventivamente.');
-                }
-            } catch (e) {
-                console.error('[GroupSender] No se pudo limpiar la carpeta local:', e);
-            }
-
-            throw new Error('La sesión de grupos está dañada. Por favor, ve al Dashboard y usa "Borrar Sesión y Reiniciar" para limpiar la nube también.');
+            console.error('❌ [GroupSender] Error de Cifrado (No sessions).');
+            console.log('[GroupSender] Sugerencia: El bot necesita que el administrador del grupo lo salude o que alguien escriba en el grupo para refrescar llaves.');
+            throw new Error('Error de cifrado en el grupo. Intenta escribir algo manualmente en el grupo desde el móvil del bot.');
         }
 
         const isConnectionError = errorMsg.includes('Connection Closed') ||
@@ -54,7 +61,7 @@ export const sendToGroup = async (number: string, message: string) => {
             errorMsg.includes('undefined (reading \'id\')');
 
         if (isConnectionError) {
-            console.warn('⚠️ [GroupSender] Error de conexión. Intentando recuperar una vez...');
+            console.warn('⚠️ [GroupSender] Error de conexión. Reintentando...');
             
             try {
                 if (groupProvider.initVendor) await groupProvider.initVendor();
@@ -80,11 +87,11 @@ export const initGroupSender = async () => {
         await restoreSessionFromDb('groups');
 
         // 2. Crear instancia de Baileys estándar con versión forzada
-        groupProvider = createProvider(BaileysProvider, {
-            version: [2, 3000, 1030817285],
+        // Usar la clase directamente en lugar de createProvider 
+        // para evitar que BuilderBot intente registrarlo como el proveedor principal
+        groupProvider = new BaileysProvider({
             groupsIgnore: false,
             readStatus: false,
-            disableHttpServer: true,
         });
 
         groupProvider.on('require_action', async (payload: any) => {
