@@ -20,6 +20,12 @@ export const initGroupSender = async () => {
         // No necesitamos servidor HTTP propio para este provider secundario
     });
 
+    // 2.1 Forzar inicialización del Vendor (Socket) ya que no usamos createBot
+    if (typeof groupProvider.initVendor === 'function') {
+        console.log('🔌 [GroupSender] Inicializando vendor manualmente...');
+        await (groupProvider as any).initVendor();
+    }
+
     // 3. Manejo de QR específico para este provider
     groupProvider.on('require_action', async (payload: any) => {
         let qrString = null;

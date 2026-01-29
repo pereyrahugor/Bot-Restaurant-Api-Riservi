@@ -82,10 +82,13 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                     const resumenConLink = `${resumen}\n\n🔗 [Chat del usuario](${data.linkWS})`;
                     try {
                         console.log('[DEBUG] Intentando enviar a grupo...');
-                        console.log('[DEBUG] groupProvider type:', typeof groupProvider);
-                        console.log('[DEBUG] groupProvider keys:', groupProvider ? Object.keys(groupProvider) : 'null');
+                        const vendorReady = groupProvider && groupProvider['vendor'];
+                        console.log(`[DEBUG] groupProvider.vendor ready? ${!!vendorReady}`);
 
                         if (groupProvider && typeof groupProvider.sendMessage === 'function') {
+                            if (!vendorReady) {
+                                console.warn('⚠️ [GroupSender] Warning: Vendor (socket) parece no estar listo/conectado aún. Intentando enviar de todas formas...');
+                            }
                             await groupProvider.sendMessage(ID_GRUPO_RESUMEN, resumenConLink, {});
                             console.log(`✅ SI_RESUMEN: Resumen enviado a ${ID_GRUPO_RESUMEN} vía Baileys`);
                         } else {
