@@ -169,6 +169,16 @@ export const processUserMessage = async (
   ctx,
   { flowDynamic, state, provider, gotoFlow }
 ) => {
+  const userId = ctx.from;
+  const botNumber = (process.env.YCLOUD_WABA_NUMBER || '').replace(/\D/g, '');
+  
+  // FILTRO DE SEGURIDAD: Evitar que el bot procese sus propios mensajes de eco
+  if (userId.replace(/\D/g, '') === botNumber) {
+      const { stop } = await import('./utils/timeOut');
+      stop(ctx); // Detenemos cualquier timer de inactividad que se haya activado por error
+      return;
+  }
+
   await typing(ctx, provider);
   try {
     const body = ctx.body && ctx.body.trim();

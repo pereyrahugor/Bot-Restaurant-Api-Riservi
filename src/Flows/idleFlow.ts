@@ -96,12 +96,12 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                 console.log('SI_RESUMEN: Solo se envía resumen al grupo y sheets.');
                 await handleGroupSending();
                 await addToSheet(data);
-                return;
+                return endFlow();
             } else {
                 console.log('Tipo desconocido/DEFAULT. Procesando como SI_RESUMEN.');
                 await handleGroupSending();
                 await addToSheet(data);
-                return;
+                return endFlow();
             }
 
         } catch (error) {
