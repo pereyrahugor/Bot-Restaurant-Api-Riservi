@@ -3,7 +3,6 @@ import { toAsk } from '@builderbot-plugins/openai-assistants';
 import { GenericResumenData, extraerDatosResumen } from '~/utils/extractJsonData';
 import { addToSheet } from '~/utils/googleSheetsResumen';
 import { ReconectionFlow } from './reconectionFlow';
-import { sendToGroup } from '../utils/groupSender'; // Importar helper robusto
 
 //** Variables de entorno para el envio de msj de resumen a grupo de WS */
 const ASSISTANT_ID = process.env.ASSISTANT_ID ?? '';
@@ -41,7 +40,10 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             const handleGroupSending = async () => {
                 const resumenConLink = `${resumen}\n\n🔗 [Chat del usuario](${data.linkWS})`;
                 try {
-                    await sendToGroup(ID_GRUPO_RESUMEN, resumenConLink);
+                    // Usar provider directamente (YCloud) en lugar de groupSender externo
+                    console.log(`🚀 [Report] Enviando reporte vía provider (YCloud) a ${ID_GRUPO_RESUMEN}...`);
+                    await provider.sendMessage(ID_GRUPO_RESUMEN, resumenConLink, {});
+                    console.log(`✅ [Report] Reporte enviado vía provider.`);
                 } catch (err) {
                     console.error(`❌ Error enviando resumen al grupo ${ID_GRUPO_RESUMEN}:`, err?.message || err);
                 }
