@@ -36,20 +36,34 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             // Limpieza robusta de caracteres invisibles y espacios
             const tipo = (data.tipo ?? '').replace(/[^A-Z_]/gi, '').toUpperCase();
 
+            // Logs de depuración para identificar por qué ctx.from es a veces el bot
+            const botNumber = (process.env.YCLOUD_WABA_NUMBER ?? '').replace(/\D/g, '');
+            const reportNumber = (process.env.ID_GRUPO_RESUMEN ?? '').replace(/\D/g, '');
+            const senderNumber = (ctx.from ?? '').replace(/\D/g, '');
+            
+            console.log(`[Link-Debug] Sender: ${senderNumber} | Bot: ${botNumber} | Report: ${reportNumber}`);
+
+            // Limpiar el resumen de cualquier enlace previo que haya podido generar OpenAI
+            const resumenLimpio = resumen.replace(/https:\/\/wa\.me\/[0-9]+/g, '').trim();
+
+            // Garantizar que data.linkWS siempre apunte al usuario y no al bot o al grupo
+            if (senderNumber === botNumber || senderNumber === reportNumber) {
+                console.warn(`⚠️ [Link-Warning] El sender (${senderNumber}) parece ser el bot o el reporte.`);
+            }
+            
+            data.linkWS = `https://wa.me/${senderNumber}`;
+
             // Función auxiliar local para manejar el envío al grupo
             const handleGroupSending = async () => {
-                const resumenConLink = `${resumen}\n\n🔗 [Chat del usuario](${data.linkWS})`;
+                const resumenConLink = `${resumenLimpio}\n\n🔗 [Chat del usuario](${data.linkWS})`;
                 try {
-                    // Usar provider directamente (YCloud) en lugar de groupSender externo
-                    console.log(`🚀 [Report] Enviando reporte vía provider (YCloud) a ${ID_GRUPO_RESUMEN}...`);
+                    console.log(`🚀 [Report] Enviando reporte oficial a ${ID_GRUPO_RESUMEN}...`);
                     await provider.sendMessage(ID_GRUPO_RESUMEN, resumenConLink, {});
-                    console.log(`✅ [Report] Reporte enviado vía provider.`);
+                    console.log(`✅ [Report] Reporte enviado.`);
                 } catch (err) {
                     console.error(`❌ Error enviando resumen al grupo ${ID_GRUPO_RESUMEN}:`, err?.message || err);
                 }
             };
-
-            data.linkWS = `https://wa.me/${ctx.from.replace(/[^0-9]/g, '')}`;
 
             if (tipo === 'NO_REPORTAR_BAJA') {
                 console.log('NO_REPORTAR_BAJA: No se realiza seguimiento ni se envía resumen al grupo.');
