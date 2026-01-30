@@ -27,40 +27,31 @@ export const sendViaYCloud = async (to: string, message: string) => {
 };
 
 /**
- * Función Principal para Grupos (Baileys)
- * Optimizada para coexistir con la misma línea de YCloud
+ * Función Principal para el envío de Resúmenes
+ * Ahora utiliza YCloud (API Oficial) por defecto para evitar problemas de cifrado
  */
 export const sendToGroup = async (target: string, message: string) => {
-    if (!groupProvider || !groupProvider.vendor?.user) {
-        console.warn('⚠️ [GroupSender] WhatsApp Grupos no conectado. Por favor, escanea el QR.');
-        throw new Error('GroupProvider no conectado.');
-    }
-
-    const vendor = groupProvider.vendor;
-
     try {
-        console.log(`� [GroupSender] Enviando reporte al grupo ${target}...`);
+        console.log(`🚀 [Report] Enviando reporte vía canal oficial YCloud a ${target}...`);
+        const success = await sendViaYCloud(target, message);
         
-        // 1. Despertar la sesión antes de enviar (Crucial para coexistencia)
-        try {
-            if (vendor.presenceSubscribe) await vendor.presenceSubscribe(target);
-            if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('composing', target);
-        } catch (e) {}
-
-        // 2. Envío directo vía Baileys
-        await vendor.sendMessage(target, { text: message });
-        
-        console.log(`✅ [GroupSender] Reporte enviado al grupo.`);
-        
-        try { if (vendor.sendPresenceUpdate) await vendor.sendPresenceUpdate('paused', target); } catch(e){}
-    } catch (error: any) {
-        const errorMsg = error?.message || String(error);
-        if (errorMsg.includes('No sessions') || errorMsg.includes('SessionError')) {
-            console.error('❌ [GroupSender] Error de Cifrado.');
-            throw new Error('Sincronizando llaves con el grupo... Por favor, envía un mensaje manual al grupo para acelerar la vinculación.');
+        if (success) {
+            console.log(`✅ [Report] Reporte enviado correctamente vía YCloud.`);
+        } else {
+            console.error(`❌ [Report] Falló el envío vía YCloud.`);
         }
+    } catch (error: any) {
+        console.error('❌ [Report] Error crítico en envío YCloud:', error.message);
         throw error;
     }
+    
+    /* 
+       Código original de Baileys (No se utiliza pero se mantiene por historial)
+       -----------------------------------------------------------------------
+       if (groupProvider?.vendor?.user) {
+           // ... lógica de Baileys ...
+       }
+    */
 };
 
 export const initGroupSender = async () => {

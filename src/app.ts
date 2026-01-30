@@ -271,8 +271,8 @@ import { initGroupSender } from "./utils/groupSender";
 // Main function to initialize the bot and load Google Sheets data
 const main = async () => {
   // Inicializar Provider Secundario para Grupos (Baileys)
-  // Esto levantará su lógica de QR y sesión independientemente del bot principal
-  await initGroupSender();
+  // Desactivado temporalmente: Usaremos la API Oficial (YCloud) para reportes directamente.
+  // await initGroupSender();
 
   // Restaurar sesión principal (YCloud no la usa, pero dejamos comentado por referencia)
   // await restoreSessionFromDb();
