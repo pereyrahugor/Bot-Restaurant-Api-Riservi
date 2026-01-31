@@ -110,7 +110,7 @@ class YCloudProvider extends ProviderClass {
                           msg.interactive?.button_reply?.title || 
                           msg.interactive?.list_reply?.title || 
                           msg.button?.text || '',
-                    from: msg.from.replace('+', ''),
+                    from: msg.wa_id || msg.from.replace('+', ''),
                     name: msg.customerProfile?.name || 'User',
                     type: msg.type,
                     payload: msg
@@ -123,14 +123,18 @@ class YCloudProvider extends ProviderClass {
                 body.entry?.forEach((entry: any) => {
                     entry.changes?.forEach((change: any) => {
                         if (change.value?.messages) {
+                            // Extraer wa_id del contacto si existe (es más estable para Brasil)
+                            const contact = change.value?.contacts?.[0];
+                            const wa_id = contact?.wa_id;
+
                             change.value.messages.forEach((msg: any) => {
                                 const formatedMessage = {
                                     body: msg.text?.body || 
                                           msg.interactive?.button_reply?.title || 
                                           msg.interactive?.list_reply?.title || 
                                           msg.button?.text || '',
-                                    from: msg.from.replace('+', ''),
-                                    name: msg.profile?.name || 'User',
+                                    from: wa_id || msg.from.replace('+', ''),
+                                    name: contact?.profile?.name || msg.profile?.name || 'User',
                                     type: msg.type,
                                     payload: msg
                                 };
