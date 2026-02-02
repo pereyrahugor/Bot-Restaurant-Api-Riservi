@@ -3,71 +3,66 @@ async function fetchStatus() {
         const res = await fetch('/api/dashboard-status');
         const data = await res.json();
 
+        if (data.error) {
+            document.getElementById('session-error').innerHTML = `<div class='error-box'>⚠️ Error: ${data.error}</div>`;
+            return;
+        }
+
         const statusEl = document.getElementById('session-status');
+        const groupsStatusEl = document.getElementById('groups-status');
         const qrSection = document.getElementById('qr-section');
         const sessionInfo = document.getElementById('session-info');
-        const sessionError = document.getElementById('session-error');
 
-        if (data.active) {
-            qrSection.style.display = 'none';
-            sessionInfo.style.display = '';
+        // 1. Estado YCloud (Principal)
+        if (data.ycloud && data.ycloud.active) {
+            statusEl.textContent = '✅ Operativo (Meta API)';
+            statusEl.className = 'status status-online';
+            if (sessionInfo) {
+                sessionInfo.style.display = 'block';
+                sessionInfo.textContent = `Número WABA: ${data.ycloud.phoneNumber || 'Configurado'}`;
+            }
+        } else {
+            statusEl.textContent = '❌ Error de Configuración';
+            statusEl.className = 'status status-offline';
+        }
 
-            const groupsStatusEl = document.getElementById('groups-status');
-            if (data.source === 'ycloud-api') {
-                statusEl.textContent = '✅ Conectado vía YCloud';
-                sessionInfo.textContent = 'El bot está operando por API (YCloud).';
-                sessionInfo.style.color = '#28a745';
-
-                if (groupsStatusEl) {
-                    groupsStatusEl.textContent = data.groupsConnected ?
-                        '✅ El bot está operando por API y los grupos están CONECTADOS.' :
-                        '❌ El bot está operando por API, pero los grupos están DESCONECTADOS (Escanea el QR).';
-                    groupsStatusEl.style.color = data.groupsConnected ? '#28a745' : '#ffc107';
+        // 2. Estado de Grupos (Baileys)
+        if (data.groups) {
+            if (data.groups.active) {
+                groupsStatusEl.textContent = `✅ Conectado (${data.groups.phoneNumber || 'Motor de Grupos'})`;
+                groupsStatusEl.style.color = '#28a745';
+                if (qrSection) qrSection.style.display = 'none';
+            } else if (data.groups.qr) {
+                groupsStatusEl.textContent = '⚠️ Esperando vinculación (Escanea el QR abajo)';
+                groupsStatusEl.style.color = '#ffc107';
+                if (qrSection) {
+                    qrSection.style.display = 'block';
+                    const qrImg = qrSection.querySelector('.qr');
+                    if (qrImg) qrImg.src = '/groups-qr.png?t=' + Date.now();
                 }
-            } else if (data.source === 'connected') {
-                statusEl.textContent = '✅ Conectado y Operativo';
-                sessionInfo.textContent = 'El bot está vinculado a WhatsApp y funcionando correctamente.';
-                sessionInfo.style.color = '#28a745';
+            } else if (data.groups.source === 'local') {
+                groupsStatusEl.textContent = '🔄 Restaurando sesión local...';
+                groupsStatusEl.style.color = '#17a2b8';
+            } else if (data.groups.hasRemote) {
+                groupsStatusEl.textContent = '📥 Descargando sesión desde Supabase...';
+                groupsStatusEl.style.color = '#17a2b8';
             } else {
-                statusEl.textContent = '✅ Sesión Local Detectada';
-                sessionInfo.textContent = 'El bot tiene archivos de sesión. Si no responde en WhatsApp, intenta reiniciar.';
-                sessionInfo.style.color = '';
+                groupsStatusEl.textContent = '❌ Desconectado (No hay sesión)';
+                groupsStatusEl.style.color = '#dc3545';
+                if (qrSection) qrSection.style.display = 'block';
             }
-        } else {
-            qrSection.style.display = '';
-            // ... resto igual ...
-
-            if (data.hasRemote) {
-                statusEl.textContent = '⏳ Restaurando...';
-                sessionInfo.style.display = '';
-                sessionInfo.textContent = data.message || 'Intentando recuperar sesión de la nube...';
-                sessionInfo.style.color = '#ffc107';
-            } else {
-                statusEl.textContent = '⏳ Esperando Escaneo';
-                sessionInfo.style.display = 'none';
-            }
-
-            // Intentar recargar el QR
-            const qrImg = document.querySelector('.qr');
-            qrImg.src = '/qr.png?t=' + Date.now();
-            qrImg.style.display = 'inline-block';
-            qrImg.nextElementSibling.style.display = 'none';
         }
 
-        if (data.error) {
-            sessionError.innerHTML = `<div class='error-box'>⚠️ Error al verificar sesión: ${data.error}</div>`;
-        } else {
-            sessionError.innerHTML = '';
-        }
     } catch (e) {
-        document.getElementById('session-status').textContent = 'Error';
-        document.getElementById('session-error').innerHTML = `<div class='error-box'>No se pudo obtener el estado del bot.</div>`;
+        console.error('Error fetchStatus:', e);
     }
 }
+
 fetchStatus();
 setInterval(fetchStatus, 10000);
 
-// Redirigir a /webreset al hacer click en el botón de reinicio
-document.getElementById('go-reset').addEventListener('click', function () {
-    window.location.href = '/webreset';
+document.getElementById('go-reset')?.addEventListener('click', function () {
+    if (confirm('¿Estás seguro de que deseas eliminar la sesión de grupos? Esto forzará un nuevo escaneo QR.')) {
+        window.location.href = '/webreset';
+    }
 });

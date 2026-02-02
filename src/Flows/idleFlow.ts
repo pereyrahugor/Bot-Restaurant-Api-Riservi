@@ -2,6 +2,7 @@ import { addKeyword, EVENTS } from '@builderbot/bot';
 import { toAsk } from '@builderbot-plugins/openai-assistants';
 import { GenericResumenData, extraerDatosResumen } from '~/utils/extractJsonData';
 import { addToSheet } from '~/utils/googleSheetsResumen';
+import { sendToGroup } from '~/utils/groupSender';
 import { ReconectionFlow } from './reconectionFlow';
 
 //** Variables de entorno para el envio de msj de resumen a grupo de WS */
@@ -57,9 +58,7 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             const handleGroupSending = async () => {
                 const resumenConLink = `${resumenLimpio}\n\n🔗 [Chat del usuario](${data.linkWS})`;
                 try {
-                    console.log(`🚀 [Report] Enviando reporte oficial a ${ID_GRUPO_RESUMEN}...`);
-                    await provider.sendMessage(ID_GRUPO_RESUMEN, resumenConLink, {});
-                    console.log(`✅ [Report] Reporte enviado.`);
+                    await sendToGroup(ID_GRUPO_RESUMEN, resumenConLink);
                 } catch (err) {
                     console.error(`❌ Error enviando resumen al grupo ${ID_GRUPO_RESUMEN}:`, err?.message || err);
                 }

@@ -1,12 +1,4 @@
-import { createProvider } from '@builderbot/bot';
-import { BaileysProvider } from '@builderbot/provider-baileys';
-import { restoreSessionFromDb, startSessionSync } from './sessionSync';
-import fs from 'fs';
-import path from 'path';
-import QRCode from 'qrcode';
-
-export let groupProvider: any;
-let isGroupReady = false;
+import { groupProvider } from '../providers/instances';
 
 /**
  * Función para enviar vía YCloud (Solo como fallback si se desea)
@@ -28,89 +20,37 @@ export const sendViaYCloud = async (to: string, message: string) => {
 
 /**
  * Función Principal para el envío de Resúmenes
- * Ahora utiliza YCloud (API Oficial) por defecto para evitar problemas de cifrado
+ * Discrimina entre Grupos (Baileys) e Individuales (YCloud)
  */
 export const sendToGroup = async (target: string, message: string) => {
+    const isOfficialGroup = target.includes('@g.us');
+    
     try {
-        console.log(`🚀 [Report] Enviando reporte vía canal oficial YCloud a ${target}...`);
-        const success = await sendViaYCloud(target, message);
-        
-        if (success) {
-            console.log(`✅ [Report] Reporte enviado correctamente vía YCloud.`);
+        if (isOfficialGroup) {
+            console.log(`🚀 [GroupSender] Enviando reporte a GRUPO vía Baileys a ${target}...`);
+            
+            if (!groupProvider) {
+                console.error('❌ [GroupSender] Error: groupProvider no inicializado.');
+                return false;
+            }
+
+            // Usar sendMessage del provider de BuilderBot
+            await groupProvider.sendMessage(target, message, {});
+            console.log(`✅ [GroupSender] Reporte enviado al grupo correctamente.`);
+            return true;
         } else {
-            console.error(`❌ [Report] Falló el envío vía YCloud.`);
+            console.log(`🚀 [Report] Enviando reporte INDIVIDUAL vía canal oficial YCloud a ${target}...`);
+            const success = await sendViaYCloud(target, message);
+            
+            if (success) {
+                console.log(`✅ [Report] Reporte enviado correctamente vía YCloud.`);
+            } else {
+                console.error(`❌ [Report] Falló el envío vía YCloud.`);
+            }
+            return success;
         }
     } catch (error: any) {
-        console.error('❌ [Report] Error crítico en envío YCloud:', error.message);
-        throw error;
+        console.error('❌ [Report] Error crítico en envío:', error.message);
+        return false;
     }
-    
-    /* 
-       Código original de Baileys (No se utiliza pero se mantiene por historial)
-       -----------------------------------------------------------------------
-       if (groupProvider?.vendor?.user) {
-           // ... lógica de Baileys ...
-       }
-    */
-};
-
-export const initGroupSender = async () => {
-    console.log('🔌 [GroupSender] Cargando motor de grupos (Vinculado a YCloud)...');
-
-    try {
-        await restoreSessionFromDb('groups');
-
-        groupProvider = createProvider(BaileysProvider, {
-            version: [2, 3000, 1030817285],
-            groupsIgnore: false,
-            readStatus: false,
-            disableHttpServer: true,
-            authTimeoutMs: 120000 // Aumentado a 2 minutos para vinculación estable
-        });
-
-        groupProvider.on('require_action', async (payload: any) => {
-            isGroupReady = false;
-            const qrString = payload?.payload?.qr || payload?.qr;
-            if (qrString) {
-                console.log('⚡ [GroupSender] QR de grupos listo para escanear.');
-                const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
-                await QRCode.toFile(qrPath, qrString, { scale: 10, margin: 2 });
-            }
-        });
-
-        groupProvider.on('ready', () => {
-            if (!isGroupReady) {
-                console.log('✅ [GroupSender] Conexión establecida correctamente.');
-                isGroupReady = true;
-                const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
-                if (fs.existsSync(qrPath)) fs.unlinkSync(qrPath);
-            }
-        });
-
-        /**
-         * 🟢 ESTO ES LO MÁS IMPORTANTE PARA EL MISMO NÚMERO:
-         * Debemos escuchar eventos pero sin procesarlos, para que Baileys 
-         * reciba internamente las actualizaciones de llaves (prekeys) 
-         * que genera la actividad de YCloud.
-         */
-        groupProvider.on('message', (ctx: any) => {
-            // Silencio total, solo procesamos llaves en el background
-        });
-
-        groupProvider.on('auth_failure', (error: any) => {
-            console.error('❌ [GroupSender] Falló la autenticación vinculado:', error);
-            isGroupReady = false;
-        });
-
-        if (typeof groupProvider.initVendor === 'function') {
-            await groupProvider.initVendor();
-        }
-
-        startSessionSync('groups');
-
-    } catch (err) {
-        console.error('❌ [GroupSender] Error en cargador de grupos:', err);
-    }
-
-    return groupProvider;
 };

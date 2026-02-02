@@ -111,6 +111,7 @@ class YCloudProvider extends ProviderClass {
                           msg.interactive?.list_reply?.title || 
                           msg.button?.text || '',
                     from: msg.wa_id || msg.from.replace('+', ''),
+                    phoneNumber: msg.from.replace('+', ''),
                     name: msg.customerProfile?.name || 'User',
                     type: msg.type,
                     payload: msg
@@ -134,6 +135,7 @@ class YCloudProvider extends ProviderClass {
                                           msg.interactive?.list_reply?.title || 
                                           msg.button?.text || '',
                                     from: wa_id || msg.from.replace('+', ''),
+                                    phoneNumber: msg.from.replace('+', ''),
                                     name: contact?.profile?.name || msg.profile?.name || 'User',
                                     type: msg.type,
                                     payload: msg
