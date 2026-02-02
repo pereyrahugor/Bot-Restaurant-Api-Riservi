@@ -460,6 +460,15 @@ const main = async () => {
     app.use(bodyParser.json());
     app.use(bodyParser.urlencoded({ extended: true }));
 
+    // Middleware para normalizar URLs (corrige //webhook a /webhook)
+    app.use((req, res, next) => {
+        if (req.url.includes('//')) {
+            console.log(`🧹 [Main] Normalizando URL: ${req.url}`);
+            req.url = req.url.replace(/\/+/g, '/');
+        }
+        next();
+    });
+
     // 1. Middleware de compatibilidad (res.json, res.send, res.sendFile, etc)
     app.use((req, res, next) => {
         // @ts-ignore

@@ -102,12 +102,32 @@ class YCloudProvider extends ProviderClass {
     public handleWebhook = (req: any, res: any) => {
         try {
             const body = req.body;
-            console.log('📬 [YCloudProvider] Webhook recibido:', JSON.stringify(body));
+            const route = req.url || '/webhook';
+            console.log(`📬 [YCloudProvider] Webhook recibido en ruta: ${route}`);
+            
+            // Responder 200 OK inmediatamente para evitar timeouts de YCloud/Meta
+            if (!res.headersSent) {
+                res.statusCode = 200;
+                res.end('OK');
+            }
 
             if (!body) {
                 console.warn('⚠️ [YCloudProvider] Webhook recibido sin cuerpo (body)');
-                return res.end('No body');
+                return;
             }
+
+            // Procesar el mensaje de forma asíncrona para no bloquear el hilo principal
+            setImmediate(() => {
+                this.processIncomingMessage(body);
+            });
+        } catch (e) {
+            console.error('[YCloudProvider] Error en handleWebhook:', e);
+        }
+    }
+
+    private processIncomingMessage = (body: any) => {
+        try {
+            // 1. Formato Nativo de YCloud (whatsapp.inbound_message.received)
             if (body.type === 'whatsapp.inbound_message.received' && body.whatsappInboundMessage) {
                 const msg = body.whatsappInboundMessage;
                 
@@ -155,21 +175,9 @@ class YCloudProvider extends ProviderClass {
                         }
                     });
                 });
-            } else {
-                console.warn('⚠️ [YCloudProvider] Formato de webhook no reconocido');
-            }
-
-            // Responder 200 OK para confirmar recepción a YCloud
-            if (!res.headersSent) {
-                res.statusCode = 200;
-                res.end('OK');
             }
         } catch (e) {
-            console.error('[YCloudProvider] Error parsing webhook:', e);
-            if (!res.headersSent) {
-                res.statusCode = 500;
-                res.end('Error');
-            }
+            console.error('[YCloudProvider] ❌ Error procesando mensaje entrante:', e);
         }
     }
 }
