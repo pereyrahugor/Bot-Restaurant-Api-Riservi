@@ -20,6 +20,9 @@ class YCloudProvider extends ProviderClass {
         // En un provider basado en API vacía, el vendor puede ser un objeto simple o null.
         // Lo definimos para cumplir el contrato.
         this.vendor = {};
+        setTimeout(() => {
+            this.emit('ready', true);
+        }, 100);
         return this.vendor;
     }
 
@@ -85,9 +88,10 @@ class YCloudProvider extends ProviderClass {
                     'Content-Type': 'application/json'
                 }
             });
+            console.log(`📤 [YCloudProvider] Mensaje enviado exitosamente a ${cleanNumber}`);
             return response.data;
         } catch (error: any) {
-            console.error('[YCloudProvider] Error enviando mensaje:', JSON.stringify(error?.response?.data || error.message, null, 2));
+            console.error('[YCloudProvider] ❌ Error enviando mensaje:', JSON.stringify(error?.response?.data || error.message, null, 2));
             return Promise.resolve(null);
         }
     }
@@ -98,9 +102,12 @@ class YCloudProvider extends ProviderClass {
     public handleWebhook = (req: any, res: any) => {
         try {
             const body = req.body;
-            console.log('[YCloudProvider] Webhook recibido:', JSON.stringify(body));
+            console.log('📬 [YCloudProvider] Webhook recibido:', JSON.stringify(body));
 
-            // 1. Formato Nativo de YCloud (whatsapp.inbound_message.received)
+            if (!body) {
+                console.warn('⚠️ [YCloudProvider] Webhook recibido sin cuerpo (body)');
+                return res.end('No body');
+            }
             if (body.type === 'whatsapp.inbound_message.received' && body.whatsappInboundMessage) {
                 const msg = body.whatsappInboundMessage;
                 
@@ -117,10 +124,12 @@ class YCloudProvider extends ProviderClass {
                     payload: msg
                 };
 
+                console.log(`📩 [YCloudProvider] Emitiendo mensaje de ${formatedMessage.from}: ${formatedMessage.body}`);
                 this.emit('message', formatedMessage);
             } 
             // 2. Formato Meta (WhatsApp Business Account / Cloud API)
             else if (body.object === 'whatsapp_business_account' || body.entry) {
+                console.log('📬 [YCloudProvider] Detectado formato Meta/Cloud API');
                 body.entry?.forEach((entry: any) => {
                     entry.changes?.forEach((change: any) => {
                         if (change.value?.messages) {
@@ -140,11 +149,14 @@ class YCloudProvider extends ProviderClass {
                                     type: msg.type,
                                     payload: msg
                                 };
+                                console.log(`📩 [YCloudProvider] Emitiendo mensaje (Meta) de ${formatedMessage.from}: ${formatedMessage.body}`);
                                 this.emit('message', formatedMessage);
                             });
                         }
                     });
                 });
+            } else {
+                console.warn('⚠️ [YCloudProvider] Formato de webhook no reconocido');
             }
 
             // Responder 200 OK para confirmar recepción a YCloud

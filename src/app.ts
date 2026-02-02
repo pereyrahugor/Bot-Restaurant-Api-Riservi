@@ -190,6 +190,7 @@ export const processUserMessage = async (
   { flowDynamic, state, provider, gotoFlow }
 ) => {
   const userId = ctx.from;
+  console.log(`[processUserMessage] 📬 Procesando mensaje de ${userId}: "${ctx.body}"`);
   const botNumber = (process.env.YCLOUD_WABA_NUMBER || '').replace(/\D/g, '');
   
   // FILTRO DE SEGURIDAD: Evitar que el bot procese sus propios mensajes de eco
@@ -241,7 +242,7 @@ export const processUserMessage = async (
       contextId
     );
     console.log(
-      "[DEBUG] Respuesta completa del asistente:",
+      `[processUserMessage] 🤖 Respuesta del asistente para ${userId}:`,
       JSON.stringify(response, null, 2)
     );
     if (!response) {
@@ -451,9 +452,13 @@ const main = async () => {
     startSessionSync('groups');
 
     const app = adapterProvider.server;
+    if (!app) {
+        console.error('❌ [Critical] adapterProvider.server no está definido. Los webhooks y el webchat no funcionarán.');
+    }
 
-    // Middleware para parsear JSON
+    // Middleware para parsear JSON (DEBE IR ANTES DE LAS RUTAS)
     app.use(bodyParser.json());
+    app.use(bodyParser.urlencoded({ extended: true }));
 
     // 1. Middleware de compatibilidad (res.json, res.send, res.sendFile, etc)
     app.use((req, res, next) => {
@@ -531,7 +536,7 @@ const main = async () => {
         app.get(route, handler);
     }
 
-    // Endpoint Webhook para YCloud
+    // 4. Endpoint Webhook para YCloud
     app.post('/webhook', (req, res) => {
         // @ts-ignore
         adapterProvider.handleWebhook(req, res);
@@ -542,10 +547,13 @@ const main = async () => {
     // Registrar páginas HTML
     serveHtmlPage("/dashboard", "dashboard.html");
     serveHtmlPage("/webchat", "webchat.html");
+    serveHtmlPage("/webreset", "webreset.html");
+    serveHtmlPage("/variables", "variables.html");
 
     // Servir archivos estáticos
     app.use("/js", serve(path.join(process.cwd(), "src", "js")));
     app.use("/style", serve(path.join(process.cwd(), "src", "style")));
+    app.use("/assets", serve(path.join(process.cwd(), "src", "assets")));
 
     // Servir el código QR de Grupos
     app.get("/groups-qr.png", (req, res) => {
@@ -559,6 +567,13 @@ const main = async () => {
         }
     });
 
+    // Endpoints de API
+    app.get('/api/assistant-name', (req, res) => {
+        const assistantName = process.env.ASSISTANT_NAME || 'Asistente demo';
+        // @ts-ignore
+        res.json({ name: assistantName });
+    });
+
     app.get('/api/dashboard-status', async (req, res) => {
         const status = await getBotStatus();
         // @ts-ignore
@@ -567,17 +582,212 @@ const main = async () => {
 
     app.post('/api/delete-session', async (req, res) => {
         try {
+            console.log('[API] Solicitud de eliminación de sesión recibida.');
+            const sessionDirs = ['bot_sessions', 'groups_sessions'];
+            sessionDirs.forEach(dir => {
+                const p = path.join(process.cwd(), dir);
+                if (fs.existsSync(p)) {
+                    console.log('[API] Eliminando directorio local:', p);
+                    fs.rmSync(p, { recursive: true, force: true });
+                }
+            });
+
+            ['bot.qr.png', 'bot.groups.qr.png'].forEach(file => {
+                const p = path.join(process.cwd(), file);
+                if (fs.existsSync(p)) fs.unlinkSync(p);
+            });
+
             await deleteSessionFromDb('groups');
             // @ts-ignore
-            res.json({ success: true });
+            res.json({ success: true, message: "Sesión eliminada correctamente" });
         } catch (err) {
+            console.error('Error en /api/delete-session:', err);
             // @ts-ignore
-            res.status(500).json({ success: false });
+            res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+        }
+    });
+
+    app.post("/api/restart-bot", async (req, res) => {
+        try {
+            const result = await RailwayApi.restartActiveDeployment();
+            if (result.success) {
+                // @ts-ignore
+                res.json({ success: true, message: "Reinicio solicitado correctamente." });
+            } else {
+                // @ts-ignore
+                res.status(500).json({ success: false, error: result.error || "Error desconocido" });
+            }
+        } catch (err: any) {
+            // @ts-ignore
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.get("/api/variables", async (req, res) => {
+        try {
+            const variables = await RailwayApi.getVariables();
+            if (variables) {
+                // @ts-ignore
+                res.json({ success: true, variables });
+            } else {
+                // @ts-ignore
+                res.status(500).json({ success: false, error: "No se pudieron obtener las variables de Railway" });
+            }
+        } catch (err: any) {
+            // @ts-ignore
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.post("/api/update-variables", async (req, res) => {
+        try {
+            // @ts-ignore
+            const { variables } = req.body;
+            if (!variables || typeof variables !== 'object') {
+                // @ts-ignore
+                return res.status(400).json({ success: false, error: "Variables no proporcionadas" });
+            }
+
+            const updateResult = await RailwayApi.updateVariables(variables);
+            if (!updateResult.success) {
+                // @ts-ignore
+                return res.status(500).json({ success: false, error: updateResult.error });
+            }
+
+            const restartResult = await RailwayApi.restartActiveDeployment();
+            // @ts-ignore
+            res.json({ success: true, message: "Variables actualizadas y reinicio solicitado." });
+        } catch (err: any) {
+            // @ts-ignore
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    // 💬 Integración de Webchat y Socket.IO
+    if (app && app.server) {
+        const realHttpServer = app.server;
+        const io = new Server(realHttpServer, { cors: { origin: "*" } });
+
+        io.on("connection", (socket) => {
+            console.log("💬 [Webchat] Nuevo cliente conectado");
+            socket.on("message", async (msg) => {
+                console.log(`💬 [Webchat] Mensaje recibido: "${msg}"`);
+                try {
+                    let ip = "";
+                    const xff = socket.handshake.headers["x-forwarded-for"];
+                    if (typeof xff === "string") ip = xff.split(",")[0];
+                    else ip = socket.handshake.address || "";
+
+                    const historyKey = `webchat_${ip}`;
+                    if (!global.webchatHistories) global.webchatHistories = {};
+                    if (!global.webchatHistories[historyKey]) global.webchatHistories[historyKey] = [];
+                    const _history = global.webchatHistories[historyKey];
+
+                    // Objeto state simulado para webchat
+                    const state = {
+                        data: {},
+                        get: function (key) {
+                            if (key === "history") return _history;
+                            if (key === "thread_id") return this.data.thread_id;
+                            return this.data[key];
+                        },
+                        update: async function (obj) {
+                            if (typeof obj === 'object') {
+                                Object.assign(this.data, obj);
+                            }
+                        },
+                        clear: async function () {
+                            this.data = {};
+                            _history.length = 0;
+                        },
+                    };
+
+                    const flowDynamic = async (arr) => {
+                        let text = "";
+                        if (Array.isArray(arr)) text = arr.map((a) => a.body).join("\n");
+                        else text = String(arr);
+                        console.log(`💬 [Webchat] Enviando respuesta a ${ip}: "${text}"`);
+                        socket.emit("reply", text);
+                    };
+
+                    console.log(`💬 [Webchat] Solicitando respuesta al asistente para ${ip}...`);
+                    const response = await getAssistantResponse(ASSISTANT_ID, msg, state, undefined, ip, ip);
+                    
+                    await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                        response,
+                        { from: ip, body: msg, type: "webchat" },
+                        flowDynamic,
+                        state,
+                        undefined,
+                        () => {},
+                        getAssistantResponse,
+                        ASSISTANT_ID
+                    );
+                } catch (err) {
+                    console.error("❌ [Webchat] Error procesando mensaje:", err);
+                    socket.emit("reply", "Hubo un error procesando tu mensaje.");
+                }
+            });
+        });
+
+        const assistantBridge = new AssistantBridge();
+        assistantBridge.setupWebChat(app, realHttpServer);
+    } else {
+        console.warn('⚠️ [Webchat] No se pudo inicializar Socket.IO porque app.server no existe.');
+    }
+
+    app.post("/webchat-api", async (req, res) => {
+        try {
+            const { message } = req.body;
+            let ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "";
+            if (Array.isArray(ip)) ip = ip[0];
+
+            console.log(`[WebChat API] Mensaje de ${ip}: ${message}`);
+
+            const session = webChatManager.getSession(ip);
+            const { getOrCreateThreadId, sendMessageToThread } = await import("./utils-web/openaiThreadBridge");
+
+            let replyTextArr = [];
+            const flowDynamic = async (arr) => {
+                if (Array.isArray(arr)) replyTextArr.push(...arr.map(a => a.body));
+                else replyTextArr.push(arr);
+            };
+
+            const threadId = await getOrCreateThreadId(session);
+            console.log(`[WebChat API] Thread ID: ${threadId}`);
+            const reply = await sendMessageToThread(threadId, message, ASSISTANT_ID);
+            console.log(`[WebChat API] Respuesta de OpenAI: "${reply}"`);
+
+            await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                reply,
+                { from: ip as string, body: message, type: "webchat" },
+                flowDynamic,
+                session,
+                undefined,
+                () => {},
+                async (...args) => await sendMessageToThread(threadId, args[1], ASSISTANT_ID),
+                ASSISTANT_ID
+            );
+
+            // @ts-ignore
+            res.json({ reply: replyTextArr.join("\n\n") });
+        } catch (err) {
+            console.error("Error en /webchat-api:", err);
+            // @ts-ignore
+            res.status(500).json({ reply: "Hubo un error procesando tu mensaje." });
         }
     });
 
     // Iniciar servidor
-    httpServer(+PORT);
+    console.log(`📡 [Main] Intentando iniciar servidor en puerto ${PORT}...`);
+    try {
+        httpServer(+PORT);
+        console.log(`✅ [Main] Servidor escuchando en puerto ${PORT}`);
+    } catch (err) {
+        console.error('❌ [Main] Error fatal al iniciar httpServer:', err);
+    }
 };
 
-main();
+main().catch(err => {
+    console.error('❌ [Main] Error crítico en la función main:', err);
+});
