@@ -129,7 +129,21 @@ class YCloudProvider extends ProviderClass {
         try {
             // 1. Formato Nativo de YCloud (whatsapp.inbound_message.received)
             if (body.type === 'whatsapp.inbound_message.received' && body.whatsappInboundMessage) {
+                console.log('📬 [YCloudProvider] Detectado formato YCloud Nativo');
                 const msg = body.whatsappInboundMessage;
+
+                // -- FILTRO DE SEGURIDAD (WABA NUMBER) --
+                const wabaNumberEnv = process.env.YCLOUD_WABA_NUMBER;
+                if (wabaNumberEnv) {
+                    const incomingDestNumber = (msg.to || '').replace(/\D/g, '');
+                    const myWabaNumber = wabaNumberEnv.replace(/\D/g, '');
+                    
+                    if (incomingDestNumber && incomingDestNumber !== myWabaNumber) {
+                        console.log(`🚫 [YCloudProvider] Nativo: Ignorando mensaje. Destino: ${incomingDestNumber} != Configurado: ${myWabaNumber}`);
+                        return;
+                    }
+                }
+                // -- FIN FILTRO --
 
                 // Mapear evento al formato de BuilderBot
                 const formatedMessage = {
@@ -162,6 +176,7 @@ class YCloudProvider extends ProviderClass {
                             // Verificar si el mensaje fue enviado al número configurado en el bot.
                             if (wabaNumberEnv && value.metadata) {
                                 const metadata = value.metadata;
+                                console.log(`[YCloudProvider] Metadata detectada. Destino ID: ${metadata.phone_number_id}, Destino Num: ${metadata.display_phone_number}`);
                                 const incomingDestId = metadata.phone_number_id;
                                 const incomingDestNumber = metadata.display_phone_number?.replace(/\D/g, '');
                                 const myWabaNumber = wabaNumberEnv.replace(/\D/g, '');
