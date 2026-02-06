@@ -104,7 +104,7 @@ class YCloudProvider extends ProviderClass {
             const body = req.body;
             const route = req.url || '/webhook';
             console.log(`📬 [YCloudProvider] Webhook recibido en ruta: ${route}`);
-            
+
             // Responder 200 OK inmediatamente para evitar timeouts de YCloud/Meta
             if (!res.headersSent) {
                 res.statusCode = 200;
@@ -130,13 +130,13 @@ class YCloudProvider extends ProviderClass {
             // 1. Formato Nativo de YCloud (whatsapp.inbound_message.received)
             if (body.type === 'whatsapp.inbound_message.received' && body.whatsappInboundMessage) {
                 const msg = body.whatsappInboundMessage;
-                
+
                 // Mapear evento al formato de BuilderBot
                 const formatedMessage = {
-                    body: msg.text?.body || 
-                          msg.interactive?.button_reply?.title || 
-                          msg.interactive?.list_reply?.title || 
-                          msg.button?.text || '',
+                    body: msg.text?.body ||
+                        msg.interactive?.button_reply?.title ||
+                        msg.interactive?.list_reply?.title ||
+                        msg.button?.text || '',
                     from: msg.wa_id || msg.from.replace('+', ''),
                     phoneNumber: msg.from.replace('+', ''),
                     name: msg.customerProfile?.name || 'User',
@@ -146,23 +146,46 @@ class YCloudProvider extends ProviderClass {
 
                 console.log(`📩 [YCloudProvider] Emitiendo mensaje de ${formatedMessage.from}: ${formatedMessage.body}`);
                 this.emit('message', formatedMessage);
-            } 
+            }
             // 2. Formato Meta (WhatsApp Business Account / Cloud API)
             else if (body.object === 'whatsapp_business_account' || body.entry) {
                 console.log('📬 [YCloudProvider] Detectado formato Meta/Cloud API');
+
+                const wabaNumberEnv = process.env.YCLOUD_WABA_NUMBER;
+
                 body.entry?.forEach((entry: any) => {
                     entry.changes?.forEach((change: any) => {
-                        if (change.value?.messages) {
+                        const value = change.value;
+                        if (value?.messages) {
+
+                            // -- FILTRO DE SEGURIDAD (WABA NUMBER) --
+                            // Verificar si el mensaje fue enviado al número configurado en el bot.
+                            if (wabaNumberEnv && value.metadata) {
+                                const metadata = value.metadata;
+                                const incomingDestId = metadata.phone_number_id;
+                                const incomingDestNumber = metadata.display_phone_number?.replace(/\D/g, '');
+                                const myWabaNumber = wabaNumberEnv.replace(/\D/g, '');
+
+                                // Si YCLOUD_WABA_NUMBER es el ID o el Teléfono, validamos contra lo que llega en metadata
+                                const isMatch = (incomingDestId === myWabaNumber) || (incomingDestNumber === myWabaNumber);
+
+                                if (!isMatch) {
+                                    console.log(`🚫 [YCloudProvider] Ignorando mensaje. Destino: ${incomingDestNumber} (ID: ${incomingDestId}) != Configurado: ${myWabaNumber}`);
+                                    return; // Salir de este change.value
+                                }
+                            }
+                            // -- FIN FILTRO --
+
                             // Extraer wa_id del contacto si existe (es más estable para Brasil)
-                            const contact = change.value?.contacts?.[0];
+                            const contact = value.contacts?.[0];
                             const wa_id = contact?.wa_id;
 
-                            change.value.messages.forEach((msg: any) => {
+                            value.messages.forEach((msg: any) => {
                                 const formatedMessage = {
-                                    body: msg.text?.body || 
-                                          msg.interactive?.button_reply?.title || 
-                                          msg.interactive?.list_reply?.title || 
-                                          msg.button?.text || '',
+                                    body: msg.text?.body ||
+                                        msg.interactive?.button_reply?.title ||
+                                        msg.interactive?.list_reply?.title ||
+                                        msg.button?.text || '',
                                     from: wa_id || msg.from.replace('+', ''),
                                     phoneNumber: msg.from.replace('+', ''),
                                     name: contact?.profile?.name || msg.profile?.name || 'User',
