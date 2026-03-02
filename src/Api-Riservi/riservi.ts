@@ -37,6 +37,11 @@ export const createReservation = async (reserva: any, apiKey?: string) => {
         throw new Error("Faltan los siguientes datos para la reserva: partySize");
     }
 
+    // Validar límite de comensales
+    if (reserva.partySize >= 13) {
+        return { error: `Limite de comensales exedido, la cantidad solicitada es para ${reserva.partySize} de comensales, derivar a linea Eventos` };
+    }
+
     // Validar y corregir la fecha para el endpoint (siempre 'YYYY-MM-DD HH:mm')
     let reservaMoment;
     let now;
@@ -136,6 +141,12 @@ export const createReservation = async (reserva: any, apiKey?: string) => {
  */
 export const checkAvailability = async (date: string, people: number, apiKey?: string) => {
     const keyToUse = apiKey || API_KEY;
+
+    // Validar límite de comensales
+    if (people >= 13) {
+        return { error: `Limite de comensales exedido, la cantidad solicitada es para ${people} de comensales, derivar a linea Eventos` };
+    }
+
     const urlDate = encodeURIComponent(date);
     const url = `${BASE_URL}/availability/available-slots/${urlDate}/${people}`;
     // LOG de entrada para checkAvailability
@@ -199,6 +210,12 @@ export const updateReservationById = async (
     if (!momentDate.isValid() || momentDate.isSameOrBefore(moment())) {
         throw new Error('La fecha de la reserva debe ser posterior a la fecha y hora actual.');
     }
+
+    // Validar límite de comensales
+    if (newPartySize >= 13) {
+        return { error: `Limite de comensales exedido, la cantidad solicitada es para ${newPartySize} de comensales, derivar a linea Eventos` };
+    }
+
     const payload: any = {
         date: momentDate.format('YYYY-MM-DD HH:mm'),
         partySize: newPartySize,

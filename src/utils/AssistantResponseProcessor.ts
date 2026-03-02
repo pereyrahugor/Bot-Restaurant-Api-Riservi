@@ -128,6 +128,29 @@ export class AssistantResponseProcessor {
             }
             const tipo = jsonData.type.trim();
 
+            // --- VALIDACIÓN DE LÍMITE DE COMENSALES ---
+            const currentPartySize = jsonData.partySize;
+            if (['#DISPONIBLE#', '#RESERVA#', '#MODIFICAR#'].includes(tipo) && typeof currentPartySize === 'number' && currentPartySize >= 13) {
+                const limitMsg = `Limite de comensales exedido, la cantidad solicitada es para ${currentPartySize} de comensales, derivar a linea Eventos`;
+                console.log(`[Validation] Límite de comensales excedido: ${currentPartySize}`);
+                
+                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, limitMsg, state, undefined, ctx.from, ctx.from);
+                if (assistantApiResponse) {
+                    await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                        assistantApiResponse,
+                        ctx,
+                        flowDynamic,
+                        state,
+                        provider,
+                        gotoFlow,
+                        getAssistantResponse,
+                        ASSISTANT_ID
+                    );
+                }
+                if (unblockUser) unblockUser();
+                return;
+            }
+
             if (tipo === "#DISPONIBLE#") {
                 const fechaOriginal = jsonData.date;
                 // Solo usar la fecha/hora corregida para contexto del asistente, no para la reserva
