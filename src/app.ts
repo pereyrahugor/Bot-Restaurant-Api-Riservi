@@ -547,8 +547,18 @@ const main = async () => {
 
     // 4. Endpoint Webhook para YCloud
     app.post('/webhook', (req, res) => {
-        // @ts-ignore
-        adapterProvider.handleWebhook(req, res);
+        // Enviar 200 OK inmediatamente al proveedor (YCloud)
+        res.status(200).send('OK');
+        
+        // Derivar el procesamiento del webhook en segundo plano
+        setTimeout(() => {
+            try {
+                // @ts-ignore
+                adapterProvider.handleWebhook(req, res);
+            } catch (err) {
+                console.error('⚠️ [Webhook] Error delegando el webhook a YCloudProvider:', err);
+            }
+        }, 10); // Un breve delay permite que Node "flushee" (envíe) la respuesta HTTP
     });
 
     httpInject(adapterProvider.server);
