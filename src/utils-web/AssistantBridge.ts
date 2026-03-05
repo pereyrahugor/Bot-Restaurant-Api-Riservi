@@ -27,14 +27,16 @@ export class AssistantBridge {
       res.end(fs.readFileSync(filePath));
     });
 
-    this.io = new Server(server, {
-      cors: { origin: "*" }
-    });
+    setTimeout(() => {
+      this.io = new Server(server, {
+        allowEIO3: true,
+        cors: { origin: "*" }
+      });
 
-    this.io.on('connection', (socket) => {
-      console.log('💬 Cliente web conectado');
+      this.io.on('connection', (socket) => {
+        console.log('💬 Cliente web conectado');
 
-      socket.on('message', async (msg: string) => {
+        socket.on('message', async (msg: string) => {
         try {
           console.log(`📩 Mensaje web: ${msg}`);
           // Usar lógica principal del bot para webchat
@@ -110,6 +112,7 @@ export class AssistantBridge {
         console.log('👋 Cliente web desconectado');
       });
     });
+    }, 1500);
   }
 
   // Guarda mensajes en la cola interna

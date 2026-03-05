@@ -18,6 +18,42 @@ import { checkAvailability, createReservation, updateReservationById, cancelRese
 import { ApiQueue } from "./ApiQueue";
 import fs from 'fs';
 import moment from 'moment';
+import { HistoryHandler } from './historyHandler';
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+});
+
+export async function waitForActiveRuns(threadId: string) {
+    if (!threadId) return;
+    try {
+        console.log(`[AssistantResponseProcessor] Verificando runs activos en thread ${threadId}...`);
+        let attempt = 0;
+        const maxAttempts = 20; // 40-60 segundos total
+        while (attempt < maxAttempts) {
+            const runs = await openai.beta.threads.runs.list(threadId, { limit: 5 });
+            const activeRun = runs.data.find(run => 
+                ["queued", "in_progress", "cancelling", "requires_action"].includes(run.status)
+            );
+            
+            if (activeRun) {
+                console.log(`[AssistantResponseProcessor] [${attempt}/${maxAttempts}] Run activo detectado (${activeRun.id}, estado: ${activeRun.status}). Esperando 2s...`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                attempt++;
+            } else {
+                console.log(`[AssistantResponseProcessor] No hay runs activos. OK.`);
+                // Delay adicional reducido pero presente para asegurar sincronización de OpenAI
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                return;
+            }
+        }
+        console.warn(`[AssistantResponseProcessor] Timeout esperando liberación del thread ${threadId}.`);
+    } catch (error) {
+        console.error(`[AssistantResponseProcessor] Error verificando runs:`, error);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+}
 
 
 // Mapa global para bloquear usuarios de WhatsApp durante operaciones API
@@ -32,7 +68,51 @@ const createReservationQueue = new ApiQueue(
 );
 
 function limpiarBloquesJSON(texto: string): string {
-    return texto.replace(/\[API\][\s\S]*?\[\/API\]/g, "");
+    // 1. Preservar bloques especiales temporalmente
+    const specialBlocks: string[] = [];
+    let textoConMarcadores = texto;
+    
+    // Preservar [DB_QUERY: ...] (Permitiendo espacios opcionales tras el corchete y el separador opcional)
+    textoConMarcadores = textoConMarcadores.replace(/\[\s*DB_QUERY\s*:?\s*[\s\S]*?\]/gi, (match) => {
+        const index = specialBlocks.length;
+        specialBlocks.push(match);
+        return `___SPECIAL_BLOCK_${index}___`;
+    });
+
+    // Preservar [DB: "T":"tabla", "D":"dato"] o [DB{"T":"..."}]
+    textoConMarcadores = textoConMarcadores.replace(/\[\s*DB\s*:?\s*[\s\S]*?\]/gi, (match) => {
+        const index = specialBlocks.length;
+        specialBlocks.push(match);
+        return `___SPECIAL_BLOCK_${index}___`;
+    });
+    
+    // Preservar [API]...[/API] (Tolerante a espacios)
+    textoConMarcadores = textoConMarcadores.replace(/\[\s*API\s*\][\s\S]*?\[\/\s*API\s*\]/gi, (match) => {
+        const index = specialBlocks.length;
+        specialBlocks.push(match);
+        return `___SPECIAL_BLOCK_${index}___`;
+    });
+    
+    // 2. Limpiar referencias de OpenAI tipo 【4:0†archivo.pdf】
+    let limpio = textoConMarcadores.replace(/【.*?】/g, "");
+
+    // 2b. Limpiar bloques JSON de "queries" que a veces fuga el asistente de OpenAI (File Search / Web Search)
+    // Se incluye opcionalmente una coma al final por si el asistente lo envía como parte de un array incompleto
+    limpio = limpio.replace(/\{\s*"queries"\s*:\s*\[[\s\S]*?\]\s*\}[\s,]*?/gi, "");
+    
+    // 2c. Limpiar bloques de PDF [PDF: ID]
+    limpio = limpio.replace(/\[\s*PDF\s*:\s*[\s\S]*?\]/gi, "");
+
+    // 2d. Filtrar SYSTEM_DB_RESULT o SYSTEM_API_RESULT filtrados por error del asistente
+    limpio = limpio.replace(/\[?\s*SYSTEM_(DB|API)_RESULT[\s\S]*?(?:\]|$)/gi, "");
+
+
+    // 3. Restaurar bloques especiales
+    specialBlocks.forEach((block, index) => {
+        limpio = limpio.replace(`___SPECIAL_BLOCK_${index}___`, block);
+    });
+    
+    return limpio;
 }
 
 function corregirFechaAnioVigente(fechaReservaStr: string): string {
@@ -504,6 +584,11 @@ export class AssistantResponseProcessor {
                 }
             }
         } else if (cleanTextResponse.length > 0) {
+            // Guardar en Supabase antes de fragmentar
+            if (ctx && ctx.from) {
+                await HistoryHandler.saveMessage(ctx.from, 'assistant', cleanTextResponse, 'text');
+            }
+
             const chunks = cleanTextResponse.split(/\n\n+/);
             for (const chunk of chunks) {
                 if (chunk.trim().length > 0) {

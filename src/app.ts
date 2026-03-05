@@ -27,9 +27,10 @@ import { ErrorReporter } from "./utils/errorReporter";
 import { AssistantBridge } from "./utils-web/AssistantBridge";
 import { WebChatManager } from "./utils-web/WebChatManager";
 import { fileURLToPath } from "url";
-import { AssistantResponseProcessor } from "./utils/AssistantResponseProcessor";
+import { AssistantResponseProcessor, waitForActiveRuns } from "./utils/AssistantResponseProcessor";
 import { getArgentinaDatetimeString } from "./utils/ArgentinaTime";
 import { RailwayApi } from "./Api-RailWay/Railway";
+import { HistoryHandler, historyEvents } from "./utils/historyHandler";
 
 // Definir __dirname para ES modules
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -96,35 +97,37 @@ const TIMEOUT_MS = 120000;
 // Control de timeout por usuario para evitar ejecuciones automáticas superpuestas
 const userTimeouts = new Map();
 
-// --- FUNCION DE REINTENTO PARA toAsk (manejo de run activo) ---
-async function toAskWithRetry(
-  assistantId,
-  message,
-  state,
-  maxRetries = 5,
-  delayMs = 20000
-) {
+export const safeToAsk = async (
+  assistantId: string,
+  message: string,
+  state: any,
+  maxRetries = 3
+) => {
   let attempt = 0;
   while (attempt < maxRetries) {
+    const threadId = state && typeof state.get === 'function' && state.get('thread_id');
+    if (threadId) {
+      try {
+        await waitForActiveRuns(threadId);
+      } catch (err) {
+        console.error('[safeToAsk] Error esperando runs activos:', err);
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
     try {
       return await toAsk(assistantId, message, state);
-    } catch (error) {
-      if (
-        error?.message?.includes("Can't add messages to thread") &&
-        error?.status === 400
-      ) {
-        // Espera y reintenta
-        await new Promise((res) => setTimeout(res, delayMs));
-        attempt++;
-        continue;
+    } catch (err: any) {
+      attempt++;
+      console.error(`[safeToAsk] Error en toAsk al contactar OpenAI (Intento ${attempt}/${maxRetries}):`, err?.message || err);
+      if (attempt >= maxRetries) {
+        console.error(`[safeToAsk] Fallo definitivo tras ${maxRetries} intentos.`);
+        throw err;
       }
-      throw error; // Otros errores, no reintentar
+      console.log(`[safeToAsk] Esperando ${attempt * 2} segundos antes del reintento...`);
+      await new Promise(r => setTimeout(r, attempt * 2000));
     }
   }
-  throw new Error(
-    "No se pudo enviar el mensaje a OpenAI Assistant tras varios intentos."
-  );
-}
+};
 
 const getAssistantResponse = async (
   assistantId,
@@ -159,14 +162,14 @@ const getAssistantResponse = async (
       console.warn(
         "⏱ Timeout alcanzado. Reintentando con mensaje de control..."
       );
-      resolve(toAskWithRetry(assistantId, systemPrompt, state));
+      resolve(safeToAsk(assistantId, systemPrompt, state));
       userTimeouts.delete(userId);
     }, TIMEOUT_MS);
     userTimeouts.set(userId, timeoutId);
   });
 
   // Lanzamos la petición a OpenAI con reintentos
-  const askPromise = toAskWithRetry(
+  const askPromise = safeToAsk(
     assistantId,
     systemPrompt + "\n" + message,
     state
@@ -204,32 +207,58 @@ export const processUserMessage = async (
   try {
     const body = ctx.body && ctx.body.trim();
 
-    // Comando para encender el bot
-    if (body === "#ON#") {
-      if (!botEnabled) {
-        botEnabled = true;
-        await flowDynamic([{ body: "🤖 Bot activado." }]);
-      } else {
-        await flowDynamic([{ body: "🤖 El bot ya está activado." }]);
-      }
-      return state;
-    }
+        // Comando para encender el bot
+        if (body === "#ON#") {
+            await HistoryHandler.toggleBot(ctx.from, true);
+            if (ctx.pushName) await HistoryHandler.getOrCreateChat(ctx.from, 'whatsapp', ctx.pushName);
+            const msg = "🤖 Bot activado para este chat.";
+            await flowDynamic([{ body: msg }]);
+            await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text');
+            return state;
+        }
 
-    // Comando para apagar el bot
-    if (body === "#OFF#") {
-      if (botEnabled) {
-        botEnabled = false;
-        await flowDynamic([{ body: "🛑 Bot desactivado. No responderé a más mensajes hasta recibir #ON#." }]);
-      } else {
-        await flowDynamic([{ body: "🛑 El bot ya está desactivado." }]);
-      }
-      return state;
-    }
+        // Comando para apagar el bot
+        if (body === "#OFF#") {
+            await HistoryHandler.toggleBot(ctx.from, false);
+            if (ctx.pushName) await HistoryHandler.getOrCreateChat(ctx.from, 'whatsapp', ctx.pushName);
+            const msg = "🛑 Bot desactivado. (Intervención humana activa)";
+            await flowDynamic([{ body: msg }]);
+            await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text');
+            return state;
+        }
 
-    // Si el bot está apagado, ignorar todo excepto #ON#
-    if (!botEnabled) {
-      return;
-    }
+        // Persistir mensaje del usuario
+        await HistoryHandler.saveMessage(
+            ctx.from, 
+            'user', 
+            body || (ctx.type === EVENTS.VOICE_NOTE ? "[Audio]" : "[Media]"), 
+            ctx.type,
+            ctx.pushName || null
+        );
+
+        // Verificar si el bot está habilitado para este usuario específico
+        const isBotActiveForUser = await HistoryHandler.isBotEnabled(ctx.from);
+        if (!isBotActiveForUser) {
+            console.log(`[Intervención Humana] Bot ignorando mensaje de ${ctx.from}`);
+            return state;
+        }
+
+        // Comando global para encender el bot
+        if (body === "#GLOBAL_ON#") {
+            let msg = "";
+            if (!botEnabled) {
+                botEnabled = true;
+                msg = "🤖 Bot global activado.";
+                await flowDynamic([{ body: msg }]);
+            } else {
+                msg = "🤖 El bot global ya está activado.";
+                await flowDynamic([{ body: msg }]);
+            }
+            await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text');
+            return state;
+        }
+
+        if (!botEnabled) return;
 
 
     const contextId = ctx.phoneNumber || ctx.from;
@@ -535,8 +564,13 @@ const main = async () => {
         const handler = (req, res) => {
             const htmlPath = path.join(process.cwd(), 'src', 'html', filename);
             if (fs.existsSync(htmlPath)) {
+                const botName = process.env.ASSISTANT_NAME || process.env.RAILWAY_PROJECT_NAME || 'Asistente';
+                let html = fs.readFileSync(htmlPath, 'utf8');
+                html = html.replace(/<title>.*?<\/title>/gi, `<title>BackOffice - ${botName}</title>`);
+                html = html.replace(/<h2[^>]*>Backoffice<\/h2>/gi, `<h2 style="margin:0; font-size: 1.2rem;">Backoffice - ${botName}</h2>`);
+                
                 // @ts-ignore
-                res.sendFile(htmlPath);
+                res.send(html);
             } else {
                 // @ts-ignore
                 res.status(404).send('HTML no encontrado');
@@ -568,6 +602,8 @@ const main = async () => {
     serveHtmlPage("/webchat", "webchat.html");
     serveHtmlPage("/webreset", "webreset.html");
     serveHtmlPage("/variables", "variables.html");
+    serveHtmlPage("/login", "login.html");
+    serveHtmlPage("/backoffice", "backoffice.html");
 
     // Servir archivos estáticos
     app.use("/js", serve(path.join(process.cwd(), "src", "js")));
@@ -682,14 +718,143 @@ const main = async () => {
         }
     });
 
+    // --- ENDPOINTS BACKOFFICE ---
+    const backofficeAuth = (req, res, next) => {
+        const token = req.headers['authorization'] || req.query.token;
+        const expectedToken = process.env.BACKOFFICE_TOKEN;
+        if (token === expectedToken) {
+            return next();
+        }
+        res.status(401).json({ success: false, error: "Unauthorized" });
+    };
+
+    app.post('/api/backoffice/auth', (req, res) => {
+        const token = req.body && req.body.token;
+        if (token === process.env.BACKOFFICE_TOKEN) {
+            // @ts-ignore
+            res.json({ success: true });
+        } else {
+            // @ts-ignore
+            res.status(401).json({ success: false, error: "Invalid token" });
+        }
+    });
+
+    app.get('/api/backoffice/chats', backofficeAuth, async (req, res) => {
+        const chats = await HistoryHandler.listChats();
+        // @ts-ignore
+        res.json(chats);
+    });
+
+    app.get('/api/backoffice/messages/:chatId', backofficeAuth, async (req, res) => {
+        const messages = await HistoryHandler.getMessages(req.params.chatId);
+        // @ts-ignore
+        res.json(messages);
+    });
+
+    app.get('/api/backoffice/profile-pic/:chatId', async (req, res) => {
+        try {
+            const { chatId } = req.params;
+            const token = req.query.token as string;
+
+            if (token !== process.env.BACKOFFICE_TOKEN) {
+                res.statusCode = 401;
+                return res.end();
+            }
+
+            if (!adapterProvider) {
+                console.error('[ProfilePic] Error: adapterProvider no inicializado');
+                res.statusCode = 500;
+                return res.end();
+            }
+
+            let jid = chatId;
+            if (chatId.match(/^\d+$/) && !chatId.includes('@')) {
+                jid = `${chatId}@s.whatsapp.net`;
+            }
+
+            const vendor = (adapterProvider as any).vendor;
+            if (vendor && typeof vendor.profilePictureUrl === 'function') {
+                try {
+                    const url = await vendor.profilePictureUrl(jid, 'image');
+                    if (url) {
+                        res.writeHead(302, { Location: url });
+                        return res.end();
+                    }
+                } catch (picError) {
+                    console.log(`[ProfilePic] No se pudo obtener foto para ${jid}:`, picError.message);
+                }
+            }
+            
+            res.statusCode = 404;
+            res.end();
+        } catch (e) {
+            console.error('[ProfilePic] Error excepcional:', e);
+            res.statusCode = 500;
+            res.end();
+        }
+    });
+
+    app.post('/api/backoffice/toggle-bot', backofficeAuth, async (req, res) => {
+        // @ts-ignore
+        const { chatId, enabled } = req.body;
+        const result = await HistoryHandler.toggleBot(chatId, enabled);
+        // @ts-ignore
+        res.json(result);
+    });
+
+    app.post('/api/backoffice/send-message', backofficeAuth, async (req, res) => {
+        // @ts-ignore
+        const { chatId, content } = req.body;
+        console.log(`[Backoffice] Intentando enviar mensaje a ${chatId}: "${content.substring(0, 50)}..."`);
+        
+        try {
+            if (!adapterProvider) {
+                // @ts-ignore
+                return res.status(500).json({ success: false, error: "Provider not ready (adapterProvider is null)" });
+            }
+
+            let targetJid = chatId;
+            if (chatId.match(/^\d+$/) && !chatId.includes('@')) {
+                targetJid = `${chatId}@s.whatsapp.net`;
+            }
+
+            if (typeof adapterProvider.sendMessage === 'function') {
+                await adapterProvider.sendMessage(targetJid, content, {});
+            } else if (typeof adapterProvider.sendText === 'function') {
+                await adapterProvider.sendText(targetJid, content);
+            } else {
+                // @ts-ignore
+                return res.status(500).json({ success: false, error: "Provider methods not found" });
+            }
+            await HistoryHandler.saveMessage(chatId, 'assistant', content, 'text');
+            // @ts-ignore
+            return res.json({ success: true });
+        } catch (err: any) {
+            console.error('[Backoffice] Error excepcional enviando mensaje:', err);
+            // @ts-ignore
+            res.status(500).json({ success: false, error: err.message || "Unknown error during send-message" });
+        }
+    });
+    // --- FIN ENDPOINTS BACKOFFICE ---
+
     // 💬 Integración de Webchat y Socket.IO
     if (app && app.server) {
         const realHttpServer = app.server;
-        const io = new Server(realHttpServer, { cors: { origin: "*" } });
+        setTimeout(() => {
+            const io = new Server(realHttpServer, { allowEIO3: true, cors: { origin: "*" } });
 
-        io.on("connection", (socket) => {
-            console.log("💬 [Webchat] Nuevo cliente conectado");
-            socket.on("message", async (msg) => {
+            // Escuchar eventos de la base de datos (HistoryHandler) y retransmitir a Web
+            historyEvents.on('new_message', (payload) => {
+                io.emit('new_message', payload);
+            });
+
+            historyEvents.on('bot_toggled', (payload) => {
+                io.emit('bot_toggled', payload);
+            });
+
+            io.on("connection", (socket) => {
+                console.log("💬 [Webchat] Nuevo cliente conectado");
+                socket.on("message", async (msg) => {
                 console.log(`💬 [Webchat] Mensaje recibido: "${msg}"`);
                 try {
                     let ip = "";
@@ -748,6 +913,7 @@ const main = async () => {
                 }
             });
         });
+        }, 1500);
 
         const assistantBridge = new AssistantBridge();
         assistantBridge.setupWebChat(app, realHttpServer);
