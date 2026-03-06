@@ -24,7 +24,7 @@ import { welcomeFlowTxt } from "./Flows/welcomeFlowTxt";
 import { welcomeFlowVoice } from "./Flows/welcomeFlowVoice";
 import { welcomeFlowImg } from "./Flows/welcomeFlowImg";
 import { ErrorReporter } from "./utils/errorReporter";
-import { AssistantBridge } from "./utils-web/AssistantBridge";
+// import { AssistantBridge } from "./utils-web/AssistantBridge";
 import { WebChatManager } from "./utils-web/WebChatManager";
 import { fileURLToPath } from "url";
 import { AssistantResponseProcessor, waitForActiveRuns } from "./utils/AssistantResponseProcessor";
@@ -559,15 +559,24 @@ const main = async () => {
         next();
     });
 
-    // 3. Función para servir páginas HTML
-    function serveHtmlPage(route, filename) {
+    function serveHtmlPage(route: string, filename: string) {
         const handler = (req, res) => {
             const htmlPath = path.join(process.cwd(), 'src', 'html', filename);
             if (fs.existsSync(htmlPath)) {
                 const botName = process.env.ASSISTANT_NAME || process.env.RAILWAY_PROJECT_NAME || 'Asistente';
                 let html = fs.readFileSync(htmlPath, 'utf8');
-                html = html.replace(/<title>.*?<\/title>/gi, `<title>BackOffice - ${botName}</title>`);
-                html = html.replace(/<h2[^>]*>Backoffice<\/h2>/gi, `<h2 style="margin:0; font-size: 1.2rem;">Backoffice - ${botName}</h2>`);
+                
+                // Reemplazos genéricos
+                html = html.replace(/<title>.*?<\/title>/gi, `<title>${filename === 'dashboard.html' ? 'Dashboard' : 'Backoffice'} - ${botName}</title>`);
+                
+                // Reemplazos específicos
+                if (filename === 'backoffice.html') {
+                    // Buscar el H2 de Backoffice en el sidebar y añadirle el nombre del bot
+                    html = html.replace(/<h2[^>]*>Backoffice<\/h2>/gi, `<h2 style="margin:0; font-size: 1.2rem;">Backoffice - ${botName}</h2>`);
+                } else if (filename === 'dashboard.html') {
+                    // Reemplazar el título principal del dashboard
+                    html = html.replace(/<h1>.*?<\/h1>/gi, `<h1>🤖 Panel de Control - ${botName}</h1>`);
+                }
                 
                 // @ts-ignore
                 res.send(html);
@@ -837,89 +846,96 @@ const main = async () => {
     });
     // --- FIN ENDPOINTS BACKOFFICE ---
 
-    // 💬 Integración de Webchat y Socket.IO
-    if (app && app.server) {
-        const realHttpServer = app.server;
-        setTimeout(() => {
-            const io = new Server(realHttpServer, { allowEIO3: true, cors: { origin: "*" } });
+    // Socket.IO initialization function
+    const initSocketIO = (serverInstance) => {
+        try {
+            if (!serverInstance) {
+                console.error('❌ [Socket.IO] No se pudo obtener serverInstance. app.server es null.');
+                return;
+            }
+            console.log('📡 [INFO] Inicializando Socket.IO en el servidor principal...');
+            const io = new Server(serverInstance, { 
+                allowEIO3: true, 
+                cors: { origin: "*" } 
+            });
 
             // Escuchar eventos de la base de datos (HistoryHandler) y retransmitir a Web
             historyEvents.on('new_message', (payload) => {
+                console.log(`📡 [Socket] Re-emitiendo new_message: ${payload.chatId}`);
                 io.emit('new_message', payload);
             });
 
             historyEvents.on('bot_toggled', (payload) => {
+                console.log(`📡 [Socket] Re-emitiendo bot_toggled: ${payload.chatId} -> ${payload.bot_enabled}`);
                 io.emit('bot_toggled', payload);
             });
 
             io.on("connection", (socket) => {
                 console.log("💬 [Webchat] Nuevo cliente conectado");
                 socket.on("message", async (msg) => {
-                console.log(`💬 [Webchat] Mensaje recibido: "${msg}"`);
-                try {
-                    let ip = "";
-                    const xff = socket.handshake.headers["x-forwarded-for"];
-                    if (typeof xff === "string") ip = xff.split(",")[0];
-                    else ip = socket.handshake.address || "";
+                    console.log(`💬 [Webchat] Mensaje recibido: "${msg}"`);
+                    try {
+                        let ip = "";
+                        const xff = socket.handshake.headers["x-forwarded-for"];
+                        if (typeof xff === "string") ip = xff.split(",")[0];
+                        else ip = socket.handshake.address || "";
 
-                    const historyKey = `webchat_${ip}`;
-                    if (!global.webchatHistories) global.webchatHistories = {};
-                    if (!global.webchatHistories[historyKey]) global.webchatHistories[historyKey] = [];
-                    const _history = global.webchatHistories[historyKey];
+                        const historyKey = `webchat_${ip}`;
+                        if (!global.webchatHistories) global.webchatHistories = {};
+                        if (!global.webchatHistories[historyKey]) global.webchatHistories[historyKey] = [];
+                        const _history = global.webchatHistories[historyKey];
 
-                    // Objeto state simulado para webchat
-                    const state = {
-                        data: {},
-                        get: function (key) {
-                            if (key === "history") return _history;
-                            if (key === "thread_id") return this.data.thread_id;
-                            return this.data[key];
-                        },
-                        update: async function (obj) {
-                            if (typeof obj === 'object') {
-                                Object.assign(this.data, obj);
-                            }
-                        },
-                        clear: async function () {
-                            this.data = {};
-                            _history.length = 0;
-                        },
-                    };
+                        // Objeto state simulado para webchat
+                        const state = {
+                            data: {},
+                            get: function (key) {
+                                if (key === "history") return _history;
+                                if (key === "thread_id") return this.data.thread_id;
+                                return this.data[key];
+                            },
+                            update: async function (obj) {
+                                if (typeof obj === 'object') {
+                                    Object.assign(this.data, obj);
+                                }
+                            },
+                            clear: async function () {
+                                this.data = {};
+                                _history.length = 0;
+                            },
+                        };
 
-                    const flowDynamic = async (arr) => {
-                        let text = "";
-                        if (Array.isArray(arr)) text = arr.map((a) => a.body).join("\n");
-                        else text = String(arr);
-                        console.log(`💬 [Webchat] Enviando respuesta a ${ip}: "${text}"`);
-                        socket.emit("reply", text);
-                    };
+                        const flowDynamic = async (arr) => {
+                            let text = "";
+                            if (Array.isArray(arr)) text = arr.map((a) => a.body).join("\n");
+                            else text = String(arr);
+                            console.log(`💬 [Webchat] Enviando respuesta a ${ip}: "${text}"`);
+                            socket.emit("reply", text);
+                        };
 
-                    console.log(`💬 [Webchat] Solicitando respuesta al asistente para ${ip}...`);
-                    const response = await getAssistantResponse(ASSISTANT_ID, msg, state, undefined, ip, ip);
-                    
-                    await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                        response,
-                        { from: ip, body: msg, type: "webchat" },
-                        flowDynamic,
-                        state,
-                        undefined,
-                        () => {},
-                        getAssistantResponse,
-                        ASSISTANT_ID
-                    );
-                } catch (err) {
-                    console.error("❌ [Webchat] Error procesando mensaje:", err);
-                    socket.emit("reply", "Hubo un error procesando tu mensaje.");
-                }
+                        let replyText = "";
+                        if (msg.trim().toLowerCase() === "#reset") {
+                            await state.clear();
+                            replyText = "🔄 Chat reiniciado.";
+                        } else {
+                            await processUserMessage(
+                                { from: ip, body: msg, type: 'webchat' }, 
+                                { flowDynamic, state, provider: undefined, gotoFlow: () => { /* no-op */ } }
+                            );
+                        }
+                        socket.emit('reply', replyText);
+                    } catch (err) {
+                        console.error("Error Socket.IO:", err);
+                        socket.emit("reply", "Error procesando mensaje.");
+                    }
+                });
             });
-        });
-        }, 1500);
+        } catch (e) {
+            console.error('❌ [Socket.IO] Error durante la inicialización:', e);
+        }
+    };
 
-        const assistantBridge = new AssistantBridge();
-        assistantBridge.setupWebChat(app, realHttpServer);
-    } else {
-        console.warn('⚠️ [Webchat] No se pudo inicializar Socket.IO porque app.server no existe.');
-    }
+    // 💬 Integración de Webchat y Socket.IO (Centralizado en initSocketIO)
+    serveHtmlPage("/webchat", "webchat.html");
 
     app.post("/webchat-api", async (req, res) => {
         try {
@@ -964,12 +980,23 @@ const main = async () => {
     });
 
     // Iniciar servidor
-    console.log(`📡 [Main] Intentando iniciar servidor en puerto ${PORT}...`);
     try {
+        console.log(`🚀 [INFO] Iniciando servidor en puerto ${PORT}...`);
         httpServer(+PORT);
-        console.log(`✅ [Main] Servidor escuchando en puerto ${PORT}`);
+        console.log(`✅ [INFO] Servidor escuchando en puerto ${PORT}`);
+        
+        // Esperamos un segundo para asegurar que el servidor subyacente esté listo
+        setTimeout(() => {
+            if (app && app.server) {
+                console.log('✅ [INFO] app.server detectado, lanzando initSocketIO');
+                initSocketIO(app.server);
+            } else {
+                console.error('❌ [ERROR] app.server NO DETECTADO después del listen.');
+            }
+        }, 1000);
+        
     } catch (err) {
-        console.error('❌ [Main] Error fatal al iniciar httpServer:', err);
+        console.error('❌ [ERROR] Error al iniciar servidor:', err);
     }
 };
 

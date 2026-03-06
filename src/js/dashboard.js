@@ -10,6 +10,7 @@ async function fetchStatus() {
 
         const statusEl = document.getElementById('session-status');
         const groupsStatusEl = document.getElementById('groups-status');
+        const groupsStatusDetailEl = document.getElementById('groups-status-detail');
         const qrSection = document.getElementById('qr-section');
         const sessionInfo = document.getElementById('session-info');
 
@@ -28,28 +29,47 @@ async function fetchStatus() {
 
         // 2. Estado de Grupos (Baileys)
         if (data.groups) {
+            let statusText = '';
+            let statusColor = '';
+            let showQr = false;
+
             if (data.groups.active) {
-                groupsStatusEl.textContent = `✅ Conectado (${data.groups.phoneNumber || 'Motor de Grupos'})`;
-                groupsStatusEl.style.color = '#28a745';
-                if (qrSection) qrSection.style.display = 'none';
+                statusText = `✅ Conectado (${data.groups.phoneNumber || 'Motor de Grupos'})`;
+                statusColor = '#28a745';
+                showQr = false;
             } else if (data.groups.qr) {
-                groupsStatusEl.textContent = '⚠️ Esperando vinculación (Escanea el QR abajo)';
-                groupsStatusEl.style.color = '#ffc107';
-                if (qrSection) {
-                    qrSection.style.display = 'block';
+                statusText = '⚠️ Esperando vinculación';
+                statusColor = '#ffc107';
+                showQr = true;
+            } else if (data.groups.source === 'local') {
+                statusText = '🔄 Restaurando sesión local...';
+                statusColor = '#17a2b8';
+                showQr = false;
+            } else if (data.groups.hasRemote) {
+                statusText = '📥 Descargando sesión...';
+                statusColor = '#17a2b8';
+                showQr = false;
+            } else {
+                statusText = '❌ Desconectado';
+                statusColor = '#dc3545';
+                showQr = true;
+            }
+
+            if (groupsStatusEl) {
+                groupsStatusEl.textContent = statusText;
+                groupsStatusEl.style.color = statusColor;
+            }
+            if (groupsStatusDetailEl) {
+                groupsStatusDetailEl.textContent = statusText;
+                groupsStatusDetailEl.style.color = statusColor;
+            }
+
+            if (qrSection) {
+                qrSection.style.display = showQr ? 'block' : 'none';
+                if (showQr) {
                     const qrImg = qrSection.querySelector('.qr');
                     if (qrImg) qrImg.src = '/groups-qr.png?t=' + Date.now();
                 }
-            } else if (data.groups.source === 'local') {
-                groupsStatusEl.textContent = '🔄 Restaurando sesión local...';
-                groupsStatusEl.style.color = '#17a2b8';
-            } else if (data.groups.hasRemote) {
-                groupsStatusEl.textContent = '📥 Descargando sesión desde Supabase...';
-                groupsStatusEl.style.color = '#17a2b8';
-            } else {
-                groupsStatusEl.textContent = '❌ Desconectado (No hay sesión)';
-                groupsStatusEl.style.color = '#dc3545';
-                if (qrSection) qrSection.style.display = 'block';
             }
         }
 
@@ -64,5 +84,13 @@ setInterval(fetchStatus, 10000);
 document.getElementById('go-reset')?.addEventListener('click', function () {
     if (confirm('¿Estás seguro de que deseas eliminar la sesión de grupos? Esto forzará un nuevo escaneo QR.')) {
         window.location.href = '/webreset';
+    }
+});
+
+document.getElementById('show-qr-btn')?.addEventListener('click', function () {
+    const qrSec = document.getElementById('qr-section');
+    if (qrSec) {
+        qrSec.scrollIntoView({ behavior: 'smooth' });
+        qrSec.style.display = 'block'; // Asegurar que sea visible si el bot cree que no es necesario pero el usuario quiere verlo
     }
 });
