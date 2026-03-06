@@ -101,7 +101,8 @@ export const safeToAsk = async (
   assistantId: string,
   message: string,
   state: any,
-  maxRetries = 3
+  userId: string,
+  maxRetries = 5
 ) => {
   let attempt = 0;
   while (attempt < maxRetries) {
@@ -122,7 +123,6 @@ export const safeToAsk = async (
       console.error(`[safeToAsk] Error en toAsk al contactar OpenAI (Intento ${attempt}/${maxRetries}):`, errorMessage);
 
       // Estrategia de Cancelación Proactiva
-      // Si el error indica que hay un run activo, intentamos extraer el ID y cancelarlo
       if (errorMessage.includes('while a run') && errorMessage.includes('is active') && threadId) {
         const runIdMatch = errorMessage.match(/run_[a-zA-Z0-9]+/);
         if (runIdMatch) {
@@ -133,9 +133,7 @@ export const safeToAsk = async (
             await openai.beta.threads.runs.cancel(threadId, activeRunId);
             console.log(`[safeToAsk] Solicitud de cancelación enviada para ${activeRunId}.`);
             
-            // Esperar un momento a que la cancelación se procese
             await new Promise(r => setTimeout(r, 3000));
-            // Volver al inicio del bucle para que waitForActiveRuns verifique la liberación
             continue; 
           } catch (cancelErr) {
             console.error(`[safeToAsk] Error al intentar cancelar el run del error:`, cancelErr);
@@ -144,8 +142,50 @@ export const safeToAsk = async (
       }
 
       if (attempt >= maxRetries) {
-        console.error(`[safeToAsk] Fallo definitivo tras ${maxRetries} intentos.`);
-        throw err;
+        console.error(`[safeToAsk] Fallo tras ${maxRetries} intentos. Intentando renovar hilo para mantener coherencia...`);
+        try {
+            // Reportar el problema antes de renovar
+            if (errorReporter) {
+                await errorReporter.reportError(
+                    new Error(`Hilo ${threadId} bloqueado tras ${maxRetries} intentos. Renovando hilo automáticamente.`),
+                    userId,
+                    `https://wa.me/${userId}`
+                );
+            }
+
+            const history = await HistoryHandler.getMessages(userId, 6);
+            const { openai } = await import("./utils/AssistantResponseProcessor");
+            
+            // Preparar mensajes para el nuevo hilo (excluyendo el sistema si lo hubiera en el historial crudo)
+            // Filtramos para OpenAI: solo 'user' y 'assistant'
+            const threadMessages = history
+                .filter(m => m.role === 'user' || m.role === 'assistant')
+                .map(m => ({
+                    role: m.role as 'user' | 'assistant',
+                    content: m.content
+                }));
+
+            // Si el último mensaje del historial es igual al que vamos a enviar, lo removemos para que toAsk no lo duplique
+            if (threadMessages.length > 0) {
+                const lastMsg = threadMessages[threadMessages.length - 1].content;
+                if (message.includes(lastMsg)) {
+                    threadMessages.pop();
+                }
+            }
+
+            const newThread = await openai.beta.threads.create({
+                messages: threadMessages as any
+            });
+            
+            console.log(`[safeToAsk] Nuevo hilo creado: ${newThread.id} para usuario ${userId}. Actualizando estado...`);
+            await state.update({ thread_id: newThread.id });
+            
+            // Intentar una última vez con el nuevo hilo
+            return await toAsk(assistantId, message, state);
+        } catch (renewalErr: any) {
+            console.error(`[safeToAsk] Error fatal al renovar el hilo:`, renewalErr);
+            throw err; 
+        }
       }
       
       const waitTime = attempt * 2000;
@@ -188,7 +228,7 @@ const getAssistantResponse = async (
       console.warn(
         "⏱ Timeout alcanzado. Reintentando con mensaje de control..."
       );
-      resolve(safeToAsk(assistantId, systemPrompt, state));
+      resolve(safeToAsk(assistantId, systemPrompt, state, userId));
       userTimeouts.delete(userId);
     }, TIMEOUT_MS);
     userTimeouts.set(userId, timeoutId);
@@ -198,7 +238,8 @@ const getAssistantResponse = async (
   const askPromise = safeToAsk(
     assistantId,
     systemPrompt + "\n" + message,
-    state
+    state,
+    userId
   ).then((result) => {
     // Si responde antes del timeout, limpiamos el timeout
     if (userTimeouts.has(userId)) {
