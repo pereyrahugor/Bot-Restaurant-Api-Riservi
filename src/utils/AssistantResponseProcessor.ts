@@ -21,7 +21,7 @@ import moment from 'moment';
 import { HistoryHandler } from './historyHandler';
 import OpenAI from "openai";
 
-const openai = new OpenAI({
+export const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
@@ -30,7 +30,9 @@ export async function waitForActiveRuns(threadId: string) {
     try {
         console.log(`[AssistantResponseProcessor] Verificando runs activos en thread ${threadId}...`);
         let attempt = 0;
-        const maxAttempts = 20; // 40-60 segundos total
+        const maxAttempts = 15; // Reducido un poco para ser más proactivos
+        let requiresActionCount = 0;
+
         while (attempt < maxAttempts) {
             const runs = await openai.beta.threads.runs.list(threadId, { limit: 5 });
             const activeRun = runs.data.find(run => 
@@ -38,13 +40,28 @@ export async function waitForActiveRuns(threadId: string) {
             );
             
             if (activeRun) {
-                console.log(`[AssistantResponseProcessor] [${attempt}/${maxAttempts}] Run activo detectado (${activeRun.id}, estado: ${activeRun.status}). Esperando 2s...`);
+                console.log(`[AssistantResponseProcessor] [${attempt}/${maxAttempts}] Run activo detectado (${activeRun.id}, estado: ${activeRun.status}).`);
+                
+                // Si el run está en 'requires_action' por más de 3 chequeos (aprox 6 segundos), 
+                // es probable que esté "huérfano" o bloqueado. Lo cancelamos.
+                if (activeRun.status === "requires_action") {
+                    requiresActionCount++;
+                    if (requiresActionCount >= 3) {
+                        console.warn(`[AssistantResponseProcessor] Run ${activeRun.id} estancado en 'requires_action'. Cancelando...`);
+                        try {
+                            await openai.beta.threads.runs.cancel(threadId, activeRun.id);
+                        } catch (cancelErr) {
+                            console.error(`[AssistantResponseProcessor] Error al cancelar run estancado:`, cancelErr);
+                        }
+                    }
+                }
+
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 attempt++;
             } else {
-                console.log(`[AssistantResponseProcessor] No hay runs activos. OK.`);
-                // Delay adicional reducido pero presente para asegurar sincronización de OpenAI
-                await new Promise(resolve => setTimeout(resolve, 1500));
+                console.log(`[AssistantResponseProcessor] No hay runs activos en ${threadId}. OK.`);
+                // Pequeña espera de cortesía para que el estado se propague en los servidores de OpenAI
+                await new Promise(resolve => setTimeout(resolve, 500));
                 return;
             }
         }

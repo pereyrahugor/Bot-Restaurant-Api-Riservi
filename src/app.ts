@@ -111,20 +111,46 @@ export const safeToAsk = async (
         await waitForActiveRuns(threadId);
       } catch (err) {
         console.error('[safeToAsk] Error esperando runs activos:', err);
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
     try {
       return await toAsk(assistantId, message, state);
     } catch (err: any) {
       attempt++;
-      console.error(`[safeToAsk] Error en toAsk al contactar OpenAI (Intento ${attempt}/${maxRetries}):`, err?.message || err);
+      const errorMessage = err?.message || String(err);
+      console.error(`[safeToAsk] Error en toAsk al contactar OpenAI (Intento ${attempt}/${maxRetries}):`, errorMessage);
+
+      // Estrategia de Cancelación Proactiva
+      // Si el error indica que hay un run activo, intentamos extraer el ID y cancelarlo
+      if (errorMessage.includes('while a run') && errorMessage.includes('is active') && threadId) {
+        const runIdMatch = errorMessage.match(/run_[a-zA-Z0-9]+/);
+        if (runIdMatch) {
+          const activeRunId = runIdMatch[0];
+          console.log(`[safeToAsk] Detectado run activo ${activeRunId} en el error. Intentando cancelar...`);
+          try {
+            const { openai } = await import("./utils/AssistantResponseProcessor");
+            await openai.beta.threads.runs.cancel(threadId, activeRunId);
+            console.log(`[safeToAsk] Solicitud de cancelación enviada para ${activeRunId}.`);
+            
+            // Esperar un momento a que la cancelación se procese
+            await new Promise(r => setTimeout(r, 3000));
+            // Volver al inicio del bucle para que waitForActiveRuns verifique la liberación
+            continue; 
+          } catch (cancelErr) {
+            console.error(`[safeToAsk] Error al intentar cancelar el run del error:`, cancelErr);
+          }
+        }
+      }
+
       if (attempt >= maxRetries) {
         console.error(`[safeToAsk] Fallo definitivo tras ${maxRetries} intentos.`);
         throw err;
       }
-      console.log(`[safeToAsk] Esperando ${attempt * 2} segundos antes del reintento...`);
-      await new Promise(r => setTimeout(r, attempt * 2000));
+      
+      const waitTime = attempt * 2000;
+      console.log(`[safeToAsk] Esperando ${waitTime / 1000} segundos antes del reintento...`);
+      await new Promise(r => setTimeout(r, waitTime));
     }
   }
 };
@@ -917,12 +943,20 @@ const main = async () => {
                             await state.clear();
                             replyText = "🔄 Chat reiniciado.";
                         } else {
-                            await processUserMessage(
-                                { from: ip, body: msg, type: 'webchat' }, 
-                                { flowDynamic, state, provider: undefined, gotoFlow: () => { /* no-op */ } }
-                            );
+                            if (!userQueues.has(ip)) userQueues.set(ip, []);
+                            const queue = userQueues.get(ip);
+                            queue.push({
+                                ctx: { from: ip, body: msg, type: 'webchat' },
+                                flowDynamic,
+                                state,
+                                provider: undefined,
+                                gotoFlow: () => { /* no-op */ }
+                            });
+                            if (!userLocks.get(ip) && queue.length === 1) {
+                                await handleQueue(ip);
+                            }
                         }
-                        socket.emit('reply', replyText);
+                        if (replyText) socket.emit('reply', replyText);
                     } catch (err) {
                         console.error("Error Socket.IO:", err);
                         socket.emit("reply", "Error procesando mensaje.");
@@ -956,19 +990,24 @@ const main = async () => {
 
             const threadId = await getOrCreateThreadId(session);
             console.log(`[WebChat API] Thread ID: ${threadId}`);
-            const reply = await sendMessageToThread(threadId, message, ASSISTANT_ID);
-            console.log(`[WebChat API] Respuesta de OpenAI: "${reply}"`);
-
-            await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                reply,
-                { from: ip as string, body: message, type: "webchat" },
+            if (!userQueues.has(ip)) userQueues.set(ip, []);
+            const queue = userQueues.get(ip);
+            
+            queue.push({
+                ctx: { from: ip as string, body: message, type: "webchat" },
                 flowDynamic,
-                session,
-                undefined,
-                () => {},
-                async (...args) => await sendMessageToThread(threadId, args[1], ASSISTANT_ID),
-                ASSISTANT_ID
-            );
+                state: session,
+                provider: undefined,
+                gotoFlow: () => {}
+            });
+
+            if (!userLocks.get(ip) && queue.length === 1) {
+                await handleQueue(ip);
+            } else {
+                while (userLocks.get(ip)) {
+                    await new Promise(res => setTimeout(res, 500));
+                }
+            }
 
             // @ts-ignore
             res.json({ reply: replyTextArr.join("\n\n") });
