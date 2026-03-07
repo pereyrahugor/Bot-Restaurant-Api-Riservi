@@ -1,5 +1,5 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
-import { toAsk } from '@builderbot-plugins/openai-assistants';
+import { safeToAsk } from '../utils/AssistantResponseProcessor';
 import { GenericResumenData, extraerDatosResumen } from '~/utils/extractJsonData';
 import { addToSheet } from '~/utils/googleSheetsResumen';
 import { sendToGroup } from '~/utils/groupSender';
@@ -16,8 +16,11 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
         console.log("Ejecutando idleFlow...");
 
         try {
-            // Obtener el resumen del asistente de OpenAI
-            const resumen = await toAsk(ASSISTANT_ID, "GET_RESUMEN", state);
+            // Obtener el resumen del asistente de OpenAI de forma robusta
+            const { errorReporter } = await import('../app');
+            const resumen = await safeToAsk(ASSISTANT_ID, "GET_RESUMEN", state, ctx.from, errorReporter);
+
+            console.log(`[idleFlow] Respuesta de OpenAI para resumen:`, resumen ? (resumen.substring(0, 100) + "...") : "NULL");
 
             if (!resumen) {
                 console.warn("No se pudo obtener el resumen.");

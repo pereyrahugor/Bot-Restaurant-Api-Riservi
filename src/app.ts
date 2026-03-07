@@ -27,7 +27,7 @@ import { ErrorReporter } from "./utils/errorReporter";
 // import { AssistantBridge } from "./utils-web/AssistantBridge";
 import { WebChatManager } from "./utils-web/WebChatManager";
 import { fileURLToPath } from "url";
-import { AssistantResponseProcessor, waitForActiveRuns } from "./utils/AssistantResponseProcessor";
+import { AssistantResponseProcessor, waitForActiveRuns, safeToAsk } from "./utils/AssistantResponseProcessor";
 import { getArgentinaDatetimeString } from "./utils/ArgentinaTime";
 import { RailwayApi } from "./Api-RailWay/Railway";
 import { HistoryHandler, historyEvents } from "./utils/historyHandler";
@@ -51,7 +51,7 @@ let botEnabled = true;
 export const userQueues = new Map();
 export const userLocks = new Map();
 
-let errorReporter;
+export let errorReporter;
 
 // Función auxiliar para verificar el estado de ambos proveedores
 const getBotStatus = async () => {
@@ -97,104 +97,6 @@ const TIMEOUT_MS = 120000;
 // Control de timeout por usuario para evitar ejecuciones automáticas superpuestas
 const userTimeouts = new Map();
 
-export const safeToAsk = async (
-  assistantId: string,
-  message: string,
-  state: any,
-  userId: string,
-  maxRetries = 5
-) => {
-  let attempt = 0;
-  while (attempt < maxRetries) {
-    const threadId = state && typeof state.get === 'function' && state.get('thread_id');
-    if (threadId) {
-      try {
-        await waitForActiveRuns(threadId);
-      } catch (err) {
-        console.error('[safeToAsk] Error esperando runs activos:', err);
-        await new Promise(r => setTimeout(r, 2000));
-      }
-    }
-    try {
-      return await toAsk(assistantId, message, state);
-    } catch (err: any) {
-      attempt++;
-      const errorMessage = err?.message || String(err);
-      console.error(`[safeToAsk] Error en toAsk al contactar OpenAI (Intento ${attempt}/${maxRetries}):`, errorMessage);
-
-      // Estrategia de Cancelación Proactiva
-      if (errorMessage.includes('while a run') && errorMessage.includes('is active') && threadId) {
-        const runIdMatch = errorMessage.match(/run_[a-zA-Z0-9]+/);
-        if (runIdMatch) {
-          const activeRunId = runIdMatch[0];
-          console.log(`[safeToAsk] Detectado run activo ${activeRunId} en el error. Intentando cancelar...`);
-          try {
-            const { openai } = await import("./utils/AssistantResponseProcessor");
-            await openai.beta.threads.runs.cancel(threadId, activeRunId);
-            console.log(`[safeToAsk] Solicitud de cancelación enviada para ${activeRunId}.`);
-            
-            await new Promise(r => setTimeout(r, 3000));
-            continue; 
-          } catch (cancelErr) {
-            console.error(`[safeToAsk] Error al intentar cancelar el run del error:`, cancelErr);
-          }
-        }
-      }
-
-      if (attempt >= maxRetries) {
-        console.error(`[safeToAsk] Fallo tras ${maxRetries} intentos. Intentando renovar hilo para mantener coherencia...`);
-        try {
-            // Reportar el problema antes de renovar
-            if (errorReporter) {
-                await errorReporter.reportError(
-                    new Error(`Hilo ${threadId} bloqueado tras ${maxRetries} intentos. Renovando hilo automáticamente.`),
-                    userId,
-                    `https://wa.me/${userId}`
-                );
-            }
-
-            const history = await HistoryHandler.getMessages(userId, 6);
-            const { openai } = await import("./utils/AssistantResponseProcessor");
-            
-            // Preparar mensajes para el nuevo hilo (excluyendo el sistema si lo hubiera en el historial crudo)
-            // Filtramos para OpenAI: solo 'user' y 'assistant'
-            const threadMessages = history
-                .filter(m => m.role === 'user' || m.role === 'assistant')
-                .map(m => ({
-                    role: m.role as 'user' | 'assistant',
-                    content: m.content
-                }));
-
-            // Si el último mensaje del historial es igual al que vamos a enviar, lo removemos para que toAsk no lo duplique
-            if (threadMessages.length > 0) {
-                const lastMsg = threadMessages[threadMessages.length - 1].content;
-                if (message.includes(lastMsg)) {
-                    threadMessages.pop();
-                }
-            }
-
-            const newThread = await openai.beta.threads.create({
-                messages: threadMessages as any
-            });
-            
-            console.log(`[safeToAsk] Nuevo hilo creado: ${newThread.id} para usuario ${userId}. Actualizando estado...`);
-            await state.update({ thread_id: newThread.id });
-            
-            // Intentar una última vez con el nuevo hilo
-            return await toAsk(assistantId, message, state);
-        } catch (renewalErr: any) {
-            console.error(`[safeToAsk] Error fatal al renovar el hilo:`, renewalErr);
-            throw err; 
-        }
-      }
-      
-      const waitTime = attempt * 2000;
-      console.log(`[safeToAsk] Esperando ${waitTime / 1000} segundos antes del reintento...`);
-      await new Promise(r => setTimeout(r, waitTime));
-    }
-  }
-};
-
 const getAssistantResponse = async (
   assistantId,
   message,
@@ -228,7 +130,7 @@ const getAssistantResponse = async (
       console.warn(
         "⏱ Timeout alcanzado. Reintentando con mensaje de control..."
       );
-      resolve(safeToAsk(assistantId, systemPrompt, state, userId));
+      resolve(safeToAsk(assistantId, systemPrompt, state, userId, errorReporter));
       userTimeouts.delete(userId);
     }, TIMEOUT_MS);
     userTimeouts.set(userId, timeoutId);
@@ -239,7 +141,8 @@ const getAssistantResponse = async (
     assistantId,
     systemPrompt + "\n" + message,
     state,
-    userId
+    userId,
+    errorReporter
   ).then((result) => {
     // Si responde antes del timeout, limpiamos el timeout
     if (userTimeouts.has(userId)) {

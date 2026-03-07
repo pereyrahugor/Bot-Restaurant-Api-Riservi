@@ -20,6 +20,7 @@ import fs from 'fs';
 import moment from 'moment';
 import { HistoryHandler } from './historyHandler';
 import OpenAI from "openai";
+import { toAsk } from "@builderbot-plugins/openai-assistants";
 
 export const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -71,6 +72,97 @@ export async function waitForActiveRuns(threadId: string) {
         await new Promise(resolve => setTimeout(resolve, 2000));
     }
 }
+
+export const safeToAsk = async (
+  assistantId: string,
+  message: string,
+  state: any,
+  userId: string,
+  errorReporter?: any,
+  maxRetries = 5
+) => {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    const threadId = state && typeof state.get === 'function' && state.get('thread_id');
+    if (threadId) {
+      try {
+        await waitForActiveRuns(threadId);
+      } catch (err) {
+        console.error('[safeToAsk] Error esperando runs activos:', err);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    try {
+      return await toAsk(assistantId, message, state);
+    } catch (err: any) {
+      attempt++;
+      const errorMessage = err?.message || String(err);
+      console.error(`[safeToAsk] Error en toAsk al contactar OpenAI (Intento ${attempt}/${maxRetries}):`, errorMessage);
+
+      // Estrategia de Cancelación Proactiva
+      if (errorMessage.includes('while a run') && errorMessage.includes('is active') && threadId) {
+        const runIdMatch = errorMessage.match(/run_[a-zA-Z0-9]+/);
+        if (runIdMatch) {
+          const activeRunId = runIdMatch[0];
+          console.log(`[safeToAsk] Detectado run activo ${activeRunId} en el error. Intentando cancelar...`);
+          try {
+            await openai.beta.threads.runs.cancel(threadId, activeRunId);
+            console.log(`[safeToAsk] Solicitud de cancelación enviada para ${activeRunId}.`);
+            await new Promise(r => setTimeout(r, 3000));
+            continue; 
+          } catch (cancelErr) {
+            console.error(`[safeToAsk] Error al intentar cancelar el run del error:`, cancelErr);
+          }
+        }
+      }
+
+      if (attempt >= maxRetries) {
+        console.error(`[safeToAsk] Fallo tras ${maxRetries} intentos. Intentando renovar hilo para mantener coherencia...`);
+        try {
+            if (errorReporter) {
+                await errorReporter.reportError(
+                    new Error(`Hilo ${threadId} bloqueado tras ${maxRetries} intentos. Renovando hilo automáticamente.`),
+                    userId,
+                    `https://wa.me/${userId}`
+                );
+            }
+
+            const history = await HistoryHandler.getMessages(userId, 10);
+            
+            const threadMessages = history
+                .filter(m => m.role === 'user' || m.role === 'assistant')
+                .map(m => ({
+                    role: m.role as 'user' | 'assistant',
+                    content: m.content
+                }));
+
+            if (threadMessages.length > 0) {
+                const lastMsg = threadMessages[threadMessages.length - 1].content;
+                if (message.includes(lastMsg)) {
+                    threadMessages.pop();
+                }
+            }
+
+            const newThread = await openai.beta.threads.create({
+                messages: threadMessages as any
+            });
+            
+            console.log(`[safeToAsk] Nuevo hilo creado: ${newThread.id} para usuario ${userId}. Actualizando estado...`);
+            await state.update({ thread_id: newThread.id });
+            
+            return await toAsk(assistantId, message, state);
+        } catch (renewalErr: any) {
+            console.error(`[safeToAsk] Error fatal al renovar el hilo:`, renewalErr);
+            throw err; 
+        }
+      }
+      
+      const waitTime = attempt * 2000;
+      console.log(`[safeToAsk] Esperando ${waitTime / 1000} segundos antes del reintento...`);
+      await new Promise(r => setTimeout(r, waitTime));
+    }
+  }
+};
 
 
 // Mapa global para bloquear usuarios de WhatsApp durante operaciones API
