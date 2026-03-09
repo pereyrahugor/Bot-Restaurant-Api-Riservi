@@ -13,17 +13,17 @@ const msjCierre: string = process.env.msjCierre as string;
 //** Flow para cierre de conversación, generación de resumen y envio a grupo de WS */
 const idleFlow = addKeyword(EVENTS.ACTION).addAction(
     async (ctx, { endFlow, provider, state }) => {
-        console.log("Ejecutando idleFlow...");
+        // console.log("Ejecutando idleFlow...");
 
         try {
             // Obtener el resumen del asistente de OpenAI de forma robusta
             const { errorReporter } = await import('../app');
             const resumen = await safeToAsk(ASSISTANT_ID, "GET_RESUMEN", state, ctx.from, errorReporter);
 
-            console.log(`[idleFlow] Respuesta de OpenAI para resumen:`, resumen ? (resumen.substring(0, 100) + "...") : "NULL");
+            // console.log(`[idleFlow] Respuesta de OpenAI para resumen:`, resumen ? (resumen.substring(0, 100) + "...") : "NULL");
 
             if (!resumen) {
-                console.warn("No se pudo obtener el resumen.");
+                // console.warn("No se pudo obtener el resumen.");
                 return endFlow();
             }
 
@@ -31,12 +31,12 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             try {
                 data = JSON.parse(resumen);
             } catch (error) {
-                console.warn("⚠️ El resumen no es JSON. Se extraerán los datos manualmente.");
+                // console.warn("⚠️ El resumen no es JSON. Se extraerán los datos manualmente.");
                 data = extraerDatosResumen(resumen);
             }
 
             // Log para depuración del valor real de tipo
-            console.log('Valor de tipo:', JSON.stringify(data.tipo), '| Longitud:', data.tipo?.length);
+            // console.log('Valor de tipo:', JSON.stringify(data.tipo), '| Longitud:', data.tipo?.length);
             // Limpieza robusta de caracteres invisibles y espacios
             const tipo = (data.tipo ?? '').replace(/[^A-Z_]/gi, '').toUpperCase();
 
@@ -45,14 +45,14 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             const reportNumber = (process.env.ID_GRUPO_RESUMEN ?? '').replace(/\D/g, '');
             const senderNumber = (ctx.from ?? '').replace(/\D/g, '');
             
-            console.log(`[Link-Debug] Sender: ${senderNumber} | Bot: ${botNumber} | Report: ${reportNumber}`);
+            // console.log(`[Link-Debug] Sender: ${senderNumber} | Bot: ${botNumber} | Report: ${reportNumber}`);
 
             // Limpiar el resumen de cualquier enlace previo que haya podido generar OpenAI
             const resumenLimpio = resumen.replace(/https:\/\/wa\.me\/[0-9]+/g, '').trim();
 
             // Garantizar que data.linkWS siempre apunte al usuario y no al bot o al grupo
             if (senderNumber === botNumber || senderNumber === reportNumber) {
-                console.warn(`⚠️ [Link-Warning] El sender (${senderNumber}) parece ser el bot o el reporte.`);
+                // console.warn(`⚠️ [Link-Warning] El sender (${senderNumber}) parece ser el bot o el reporte.`);
             }
             
             data.linkWS = `https://wa.me/${senderNumber}`;
@@ -63,16 +63,16 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                 try {
                     await sendToGroup(ID_GRUPO_RESUMEN, resumenConLink);
                 } catch (err) {
-                    console.error(`❌ Error enviando resumen al grupo ${ID_GRUPO_RESUMEN}:`, err?.message || err);
+                    // console.error(`❌ Error enviando resumen al grupo ${ID_GRUPO_RESUMEN}:`, err?.message || err);
                 }
             };
 
             if (tipo === 'NO_REPORTAR_BAJA') {
-                console.log('NO_REPORTAR_BAJA: No se realiza seguimiento ni se envía resumen al grupo.');
+                // console.log('NO_REPORTAR_BAJA: No se realiza seguimiento ni se envía resumen al grupo.');
                 await addToSheet(data);
                 return endFlow();
             } else if (tipo === 'NO_REPORTAR_SEGUIR') {
-                console.log('NO_REPORTAR_SEGUIR: Se realiza seguimiento, pero no se envía resumen al grupo.');
+                // console.log('NO_REPORTAR_SEGUIR: Se realiza seguimiento, pero no se envía resumen al grupo.');
                 const reconFlow = new ReconectionFlow({
                     ctx,
                     state,
@@ -95,19 +95,19 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                 });
                 return await reconFlow.start();
             } else if (tipo === 'SI_RESUMEN') {
-                console.log('SI_RESUMEN: Solo se envía resumen al grupo y sheets.');
+                // console.log('SI_RESUMEN: Solo se envía resumen al grupo y sheets.');
                 await handleGroupSending();
                 await addToSheet(data);
                 return endFlow();
             } else {
-                console.log('Tipo desconocido/DEFAULT. Procesando como SI_RESUMEN.');
+                // console.log('Tipo desconocido/DEFAULT. Procesando como SI_RESUMEN.');
                 await handleGroupSending();
                 await addToSheet(data);
                 return endFlow();
             }
 
         } catch (error) {
-            console.error("Error al obtener el resumen de OpenAI:", error);
+            // console.error("Error al obtener el resumen de OpenAI:", error);
             return endFlow();
         }
     }

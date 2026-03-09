@@ -105,57 +105,47 @@ const getAssistantResponse = async (
   userId,
   userPhone
 ) => {
-  // Si hay un timeout previo, lo limpiamos
-  if (userTimeouts.has(userId)) {
-    clearTimeout(userTimeouts.get(userId));
-    userTimeouts.delete(userId);
-  }
-
-  // Agregar fecha y hora actual y número de contacto como contexto para el asistente
   const currentDatetimeArg = getArgentinaDatetimeString();
-  console.log(
-    "[DEBUG] Fecha y hora actual (GMT-3) enviada al asistente:",
-    currentDatetimeArg
-  );
-  let systemPrompt = "";
-  if (fallbackMessage) systemPrompt += fallbackMessage + "\n";
-  systemPrompt += `Fecha, hora y día de la semana de referencia para el asistente: ${currentDatetimeArg}`;
-  if (userPhone)
-    systemPrompt += `\nNúmero de contacto del usuario: ${userPhone}`;
+  let systemPrompt = `Fecha, hora y día de la semana de referencia: ${currentDatetimeArg}`;
+  if (fallbackMessage) systemPrompt += `\n${fallbackMessage}`;
+  if (userPhone) systemPrompt += `\nNúmero de contacto: ${userPhone}`;
 
-  let timeoutResolve;
-  const timeoutPromise = new Promise((resolve) => {
-    timeoutResolve = resolve;
+  // safeToAsk ya tiene su propia lógica de reintentos y esperas.
+  // Solo envolvemos en un timeout para que el flujo de BuilderBot no se cuelgue infinitamente,
+  // pero NO disparamos una segunda petición si la primera tarda.
+  
+  return new Promise(async (resolve) => {
+    let completed = false;
     const timeoutId = setTimeout(() => {
-      console.warn(
-        "⏱ Timeout alcanzado. Reintentando con mensaje de control..."
-      );
-      resolve(safeToAsk(assistantId, systemPrompt, state, userId, errorReporter));
-      userTimeouts.delete(userId);
+      if (!completed) {
+        // console.warn(`[Timeout] Respuesta de Assistant tardando más de ${TIMEOUT_MS / 1000}s para ${userId}`);
+        completed = true;
+        resolve(null); // Resolvemos con null para que el llamador sepa que hubo timeout
+      }
     }, TIMEOUT_MS);
-    userTimeouts.set(userId, timeoutId);
-  });
 
-  // Lanzamos la petición a OpenAI con reintentos
-  const askPromise = safeToAsk(
-    assistantId,
-    systemPrompt + "\n" + message,
-    state,
-    userId,
-    errorReporter
-  ).then((result) => {
-    // Si responde antes del timeout, limpiamos el timeout
-    if (userTimeouts.has(userId)) {
-      clearTimeout(userTimeouts.get(userId));
-      userTimeouts.delete(userId);
+    try {
+      const result = await safeToAsk(
+        assistantId,
+        systemPrompt + "\n" + message,
+        state,
+        userId,
+        errorReporter
+      );
+      if (!completed) {
+        clearTimeout(timeoutId);
+        completed = true;
+        resolve(result);
+      }
+    } catch (error) {
+      if (!completed) {
+        clearTimeout(timeoutId);
+        completed = true;
+        // console.error(`[Error] Fallo crítico en safeToAsk para ${userId}:`, error);
+        resolve(null);
+      }
     }
-    // Resolvemos el timeout para evitar que quede pendiente
-    timeoutResolve(result);
-    return result;
   });
-
-  // El primero que responda (OpenAI o timeout) gana
-  return Promise.race([askPromise, timeoutPromise]);
 };
 
 export const processUserMessage = async (
@@ -163,7 +153,7 @@ export const processUserMessage = async (
   { flowDynamic, state, provider, gotoFlow }
 ) => {
   const userId = ctx.from;
-  console.log(`[processUserMessage] 📬 Procesando mensaje de ${userId}: "${ctx.body}"`);
+  // console.log(`[processUserMessage] 📬 Procesando mensaje de ${userId}: "${ctx.body}"`);
   const botNumber = (process.env.YCLOUD_WABA_NUMBER || '').replace(/\D/g, '');
   
   // FILTRO DE SEGURIDAD: Evitar que el bot procese sus propios mensajes de eco
@@ -209,7 +199,7 @@ export const processUserMessage = async (
         // Verificar si el bot está habilitado para este usuario específico
         const isBotActiveForUser = await HistoryHandler.isBotEnabled(ctx.from);
         if (!isBotActiveForUser) {
-            console.log(`[Intervención Humana] Bot ignorando mensaje de ${ctx.from}`);
+            // console.log(`[Intervención Humana] Bot ignorando mensaje de ${ctx.from}`);
             return state;
         }
 
@@ -240,10 +230,7 @@ export const processUserMessage = async (
       ctx.from,
       contextId
     );
-    console.log(
-      `[processUserMessage] 🤖 Respuesta del asistente para ${userId}:`,
-      JSON.stringify(response, null, 2)
-    );
+    // console.log(`[processUserMessage] 🤖 Respuesta del asistente para ${userId}:`, JSON.stringify(response, null, 2));
     if (!response) {
       await errorReporter.reportError(
         new Error("No se recibió respuesta del asistente."),
@@ -263,7 +250,7 @@ export const processUserMessage = async (
     );
     return state;
   } catch (error) {
-    console.error("Error al procesar el mensaje del usuario:", error);
+    // console.error("Error al procesar el mensaje del usuario:", error);
     await errorReporter.reportError(
       error,
       ctx.from,
@@ -289,7 +276,7 @@ export const handleQueue = async (userId) => {
     try {
       await processUserMessage(ctx, { flowDynamic, state, provider, gotoFlow });
     } catch (error) {
-      console.error(`Error procesando el mensaje de ${userId}:`, error);
+      // console.error(`Error procesando el mensaje de ${userId}:`, error);
     }
   }
 
@@ -307,9 +294,9 @@ const main = async () => {
     if (fs.existsSync(qrPath)) {
         try {
             fs.unlinkSync(qrPath);
-            console.log('🗑️ [Init] QR antiguo eliminado.');
+            // console.log('🗑️ [Init] QR antiguo eliminado.');
         } catch (e) {
-            console.error('⚠️ [Init] No se pudo eliminar QR antiguo:', e);
+            // console.error('⚠️ [Init] No se pudo eliminar QR antiguo:', e);
         }
     }
 
@@ -319,7 +306,7 @@ const main = async () => {
         // Pequeña espera para asegurar que el sistema de archivos se asiente
         await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (e) {
-        console.error('[Init] Error restaurando sesión de grupos:', e);
+        // console.error('[Init] Error restaurando sesión de grupos:', e);
     }
 
     // 3. Inicializar Provider Principal (YCloud)
@@ -327,7 +314,7 @@ const main = async () => {
 
     // 4. Inicializar Provider Secundario (Grupos - Baileys)
     try {
-        console.log('📡 [GroupSync] Creando instancia de motor de grupos (Baileys)...');
+        // console.log('📡 [GroupSync] Creando instancia de motor de grupos (Baileys)...');
         
         setGroupProvider(createProvider(BaileysProvider, {
             version: [2, 3000, 1030817285],
@@ -339,59 +326,59 @@ const main = async () => {
         // Configurar listeners redundantes para QR
         const handleQR = async (qrString: string) => {
             if (qrString) {
-                console.log(`⚡ [GroupSync] QR detectado (largo: ${qrString.length}). Generando bot.groups.qr.png...`);
+                // console.log(`⚡ [GroupSync] QR detectado (largo: ${qrString.length}). Generando bot.groups.qr.png...`);
                 const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
                 await QRCode.toFile(qrPath, qrString, { scale: 10, margin: 2 });
-                console.log(`✅ [GroupSync] QR guardado en ${qrPath}`);
+                // console.log(`✅ [GroupSync] QR guardado en ${qrPath}`);
             }
         };
 
         groupProvider.on('require_action', async (payload: any) => {
-            console.log('⚡ [GroupSync] require_action received.');
+            // console.log('⚡ [GroupSync] require_action received.');
             const qr = (typeof payload === 'string') ? payload : (payload?.qr || payload?.payload?.qr || payload?.code);
             await handleQR(qr);
         });
 
         groupProvider.on('qr', async (qr: string) => {
-            console.log('⚡ [GroupSync] event qr received.');
+            // console.log('⚡ [GroupSync] event qr received.');
             await handleQR(qr);
         });
 
         groupProvider.on('auth_require', async (qr: string) => {
-            console.log('⚡ [GroupSync] event auth_require received.');
+            // console.log('⚡ [GroupSync] event auth_require received.');
             await handleQR(qr);
         });
 
         groupProvider.on('ready', () => {
-             console.log('✅ [GroupSync] Motor de grupos conectado satisfactoriamente.');
+             // console.log('✅ [GroupSync] Motor de grupos conectado satisfactoriamente.');
              const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
              if (fs.existsSync(qrPath)) fs.unlinkSync(qrPath);
         });
 
         // Forzar arranque del motor secundario
-        console.log('📡 [GroupSync] Iniciando vendor...');
+        // console.log('📡 [GroupSync] Iniciando vendor...');
         setTimeout(async () => {
             try {
                 if (groupProvider.initVendor) {
                     await groupProvider.initVendor();
-                    console.log('📡 [GroupSync] initVendor ejecutado.');
+                    // console.log('📡 [GroupSync] initVendor ejecutado.');
                 } else if ((groupProvider as any).init) {
                     await (groupProvider as any).init();
                 }
             } catch (err) {
-                console.error('❌ [GroupSync] Error al llamar initVendor:', err);
+                // console.error('❌ [GroupSync] Error al llamar initVendor:', err);
             }
         }, 1000);
 
         groupProvider.on('message', () => {}); 
 
     } catch (e) {
-        console.error('❌ [GroupSync] Error crítico en motor de grupos:', e);
+        // console.error('❌ [GroupSync] Error crítico en motor de grupos:', e);
     }
 
     // 5. Listeners del Provider Principal
     adapterProvider.on('require_action', async (payload: any) => {
-        console.log('⚡ [Provider] require_action received. Payload:', payload);
+        // console.log('⚡ [Provider] require_action received. Payload:', payload);
         let qrString = null;
         if (typeof payload === 'string') {
             qrString = payload;
@@ -400,7 +387,7 @@ const main = async () => {
             else if (payload.code) qrString = payload.code;
         }
         if (qrString && typeof qrString === 'string') {
-            console.log('⚡ [Provider] QR Code detected (length: ' + qrString.length + '). Generating image...');
+            // console.log('⚡ [Provider] QR Code detected (length: ' + qrString.length + '). Generating image...');
             try {
                 const qrPath = path.join(process.cwd(), 'bot.qr.png');
                 await QRCode.toFile(qrPath, qrString, {
@@ -408,31 +395,31 @@ const main = async () => {
                     scale: 4,
                     margin: 2
                 });
-                console.log(`✅ [Provider] QR Image saved to ${qrPath}`);
+                // console.log(`✅ [Provider] QR Image saved to ${qrPath}`);
             } catch (err) {
-                console.error('❌ [Provider] Error generating QR image:', err);
+                // console.error('❌ [Provider] Error generating QR image:', err);
             }
         }
     });
 
     adapterProvider.on('message', (ctx) => {
-        console.log(`Type Msj Recibido: ${ctx.type || 'desconocido'}`);
+        // console.log(`Type Msj Recibido: ${ctx.type || 'desconocido'}`);
         
         const isYCloudButton = ctx.type === 'interactive' || ctx.type === 'button';
 
         if (isYCloudButton) {
-            console.log('🔘 Interacción de botón detectada');
+            // console.log('🔘 Interacción de botón detectada');
             ctx.type = EVENTS.ACTION;
         }
     });
 
     adapterProvider.on('ready', () => {
-        console.log('✅ [Provider] READY: El bot está conectado y operativo.');
+        // console.log('✅ [Provider] READY: El bot está conectado y operativo.');
     });
 
     errorReporter = new ErrorReporter(adapterProvider, ID_GRUPO_RESUMEN);
 
-    console.log('🚀 [Init] Iniciando createBot...');
+    // console.log('🚀 [Init] Iniciando createBot...');
     const adapterFlow = createFlow([
         welcomeFlowTxt,
         welcomeFlowVoice,
@@ -452,7 +439,7 @@ const main = async () => {
 
     const app = adapterProvider.server;
     if (!app) {
-        console.error('❌ [Critical] adapterProvider.server no está definido. Los webhooks y el webchat no funcionarán.');
+        // console.error('❌ [Critical] adapterProvider.server no está definido. Los webhooks y el webchat no funcionarán.');
     }
 
     // Middleware para parsear JSON (DEBE IR ANTES DE LAS RUTAS)
@@ -462,7 +449,7 @@ const main = async () => {
     // Middleware para normalizar URLs (corrige //webhook a /webhook)
     app.use((req, res, next) => {
         if (req.url.includes('//')) {
-            console.log(`🧹 [Main] Normalizando URL: ${req.url}`);
+            // console.log(`🧹 [Main] Normalizando URL: ${req.url}`);
             req.url = req.url.replace(/\/+/g, '/');
         }
         next();
