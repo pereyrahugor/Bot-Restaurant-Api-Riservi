@@ -245,16 +245,18 @@ export class AssistantResponseProcessor {
         provider: any,
         gotoFlow: any,
         getAssistantResponse: Function,
-        ASSISTANT_ID: string
+        ASSISTANT_ID: string,
+        isRecursive: boolean = false
     ) {
         // Log de mensaje entrante del asistente (antes de cualquier filtro)
         if (ctx && ctx.type === 'webchat') {
-            // console.log('[Webchat Debug] Mensaje entrante del asistente:', response);
+            console.log('[Webchat Debug] Mensaje entrante del asistente:', response);
         } else {
-            // console.log('[WhatsApp Debug] Mensaje entrante del asistente:', response);
-            // Si el usuario está bloqueado por una operación API, evitar procesar nuevos mensajes
-            if (userApiBlockMap.has(ctx.from)) {
-                // console.log(`[API Block] Mensaje ignorado de usuario bloqueado: ${ctx.from}`);
+            console.log('[WhatsApp Debug] Mensaje entrante del asistente:', response);
+            // Si el usuario está bloqueado por una operación API, evitar procesar nuevos mensajes de entrada
+            // pero permitir las llamadas recursivas internas del bot
+            if (!isRecursive && ctx.from && userApiBlockMap.has(ctx.from)) {
+                console.log(`[API Block] Mensaje ignorado de usuario bloqueado: ${ctx.from}`);
                 return;
             }
         }
@@ -288,7 +290,7 @@ export class AssistantResponseProcessor {
         if (!jsonData) {
             jsonData = JsonBlockFinder.buscarBloquesJSONEnTexto(textResponse) || (typeof response === "object" ? JsonBlockFinder.buscarBloquesJSONProfundo(response) : null);
             if (!jsonData && ctx && ctx.type === 'webchat') {
-                // console.log('[Webchat Debug] No JSON block detected in assistant response. Raw output:', textResponse);
+                console.log('[Webchat Debug] No JSON block detected in assistant response. Raw output:', textResponse);
             }
         }
 
@@ -309,7 +311,7 @@ export class AssistantResponseProcessor {
             }
             // Log para detectar canal y datos antes de enviar
             if (ctx && ctx.type !== 'webchat') {
-                // console.log('[WhatsApp Debug] Antes de enviar con flowDynamic:', jsonData, ctx.from);
+                console.log('[WhatsApp Debug] Antes de enviar con flowDynamic o procesar API:', jsonData, ctx.from);
             }
             const tipo = jsonData.type.trim();
 
@@ -320,7 +322,6 @@ export class AssistantResponseProcessor {
                 // console.log(`[Validation] Límite de comensales excedido: ${currentPartySize}`);
                 
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, limitMsg, state, undefined, ctx.from, ctx.from);
-                if (assistantApiResponse) {
                     await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                         assistantApiResponse,
                         ctx,
@@ -329,9 +330,9 @@ export class AssistantResponseProcessor {
                         provider,
                         gotoFlow,
                         getAssistantResponse,
-                        ASSISTANT_ID
+                        ASSISTANT_ID,
+                        true
                     );
-                }
                 if (unblockUser) unblockUser();
                 return;
             }
@@ -367,7 +368,8 @@ export class AssistantResponseProcessor {
                             provider,
                             gotoFlow,
                             getAssistantResponse,
-                            ASSISTANT_ID
+                            ASSISTANT_ID,
+                        true
                         );
                     }
                     if (unblockUser) unblockUser();
@@ -425,7 +427,8 @@ export class AssistantResponseProcessor {
                             provider,
                             gotoFlow,
                             getAssistantResponse,
-                            ASSISTANT_ID
+                            ASSISTANT_ID,
+                            true
                         );
                     }
                     return;
@@ -442,7 +445,8 @@ export class AssistantResponseProcessor {
                             provider,
                             gotoFlow,
                             getAssistantResponse,
-                            ASSISTANT_ID
+                            ASSISTANT_ID,
+                            true
                         );
                     }
                     return;
@@ -464,7 +468,8 @@ export class AssistantResponseProcessor {
                             provider,
                             gotoFlow,
                             getAssistantResponse,
-                            ASSISTANT_ID
+                            ASSISTANT_ID,
+                            true
                         );
                     }
                     return;
@@ -477,11 +482,11 @@ export class AssistantResponseProcessor {
                 // console.log(`[Debug] RESERVA: ${now} - Estado actual:`, JSON.stringify(state));
                 // Evitar solapamiento: si hay una reserva en curso, no procesar otra
                 if (state.reservaEnCurso) {
-                    // console.log(`[Debug] RESERVA: ${now} - Reserva en curso, se ignora el nuevo bloque.`);
+                    console.log(`[Debug] RESERVA: ${now} - Reserva en curso, se ignora el nuevo bloque.`);
                     try {
                         await flowDynamic([{ body: "Ya estamos procesando una reserva. Espera la confirmación antes de solicitar otra." }]);
                         if (ctx && ctx.type !== 'webchat') {
-                            // console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
+                            console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente (aviso de reserva en curso)');
                         }
                     } catch (err) {
                         // console.error('[WhatsApp Debug] Error en flowDynamic:', err);
@@ -494,8 +499,8 @@ export class AssistantResponseProcessor {
                 // jsonData.date debe mantener la hora original recibida del asistente
                 // Control de fecha futura eliminado (ya validado antes)
                 // Siempre llamar a la API antes de limpiar/enviar el texto
-                // console.log('[Debug] RESERVA: Payload para createReservation:', JSON.stringify(jsonData));
-                // console.log('[API Debug] Llamada a createReservation:', JSON.stringify(jsonData));
+                console.log('[Debug] RESERVA: Payload para createReservation:', JSON.stringify(jsonData));
+                console.log('[API Debug] Llamada a createReservation:', JSON.stringify(jsonData));
                 let apiResponse;
                 let reservaId = null;
                 let apiError = null;
@@ -506,7 +511,7 @@ export class AssistantResponseProcessor {
                         apiKey: process.env.RESERVI_API_KEY
                     }, ctx.from || "");
                     apiResponse = result.response;
-                    // console.log('[API Debug] Respuesta de createReservation:', apiResponse);
+                    console.log('[API Debug] Respuesta de createReservation:', apiResponse);
                     reservaId = apiResponse && (apiResponse.reservaId || apiResponse.id || apiResponse.bookingId || apiResponse.reservationId);
                     if (apiResponse && (apiResponse.error || apiResponse.errors)) {
                         apiError = apiResponse.error || JSON.stringify(apiResponse.errors);
@@ -526,7 +531,8 @@ export class AssistantResponseProcessor {
                             provider,
                             gotoFlow,
                             getAssistantResponse,
-                            ASSISTANT_ID
+                            ASSISTANT_ID,
+                            true
                         );
                     }
                     state.reservaEnCurso = false;
@@ -545,7 +551,8 @@ export class AssistantResponseProcessor {
                             provider,
                             gotoFlow,
                             getAssistantResponse,
-                            ASSISTANT_ID
+                            ASSISTANT_ID,
+                            true
                         );
                     }
                     state.reservaEnCurso = false;
@@ -568,7 +575,8 @@ export class AssistantResponseProcessor {
                         provider,
                         gotoFlow,
                         getAssistantResponse,
-                        ASSISTANT_ID
+                        ASSISTANT_ID,
+                        true
                     );
                 } else {
                     // FALLBACK: Si OpenAI falla en el paso final, al menos enviamos un mensaje directo al usuario
@@ -608,7 +616,8 @@ export class AssistantResponseProcessor {
                         provider,
                         gotoFlow,
                         getAssistantResponse,
-                        ASSISTANT_ID
+                        ASSISTANT_ID,
+                        true
                     );
                 }
                 return;
@@ -637,7 +646,8 @@ export class AssistantResponseProcessor {
                         provider,
                         gotoFlow,
                         getAssistantResponse,
-                        ASSISTANT_ID
+                        ASSISTANT_ID,
+                        true
                     );
                 }
                 return;
@@ -666,7 +676,8 @@ export class AssistantResponseProcessor {
                         provider,
                         gotoFlow,
                         getAssistantResponse,
-                        ASSISTANT_ID
+                        ASSISTANT_ID,
+                        true
                     );
                 }
                 return;
