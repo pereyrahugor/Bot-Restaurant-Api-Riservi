@@ -20,10 +20,10 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             const { errorReporter } = await import('../app');
             const resumen = await safeToAsk(ASSISTANT_ID, "GET_RESUMEN", state, ctx.from, errorReporter);
 
-            // console.log(`[idleFlow] Respuesta de OpenAI para resumen:`, resumen ? (resumen.substring(0, 100) + "...") : "NULL");
+            console.log(`[idleFlow] Respuesta de OpenAI para resumen:`, resumen ? (resumen.substring(0, 100) + "...") : "NULL");
 
             if (!resumen) {
-                // console.warn("No se pudo obtener el resumen.");
+                console.warn("No se pudo obtener el resumen.");
                 return endFlow();
             }
 
@@ -107,7 +107,7 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             }
 
         } catch (error) {
-            // console.error("Error al obtener el resumen de OpenAI:", error);
+            console.error("Error al obtener el resumen de OpenAI:", error);
             return endFlow();
         }
     }

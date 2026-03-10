@@ -118,7 +118,7 @@ const getAssistantResponse = async (
     let completed = false;
     const timeoutId = setTimeout(() => {
       if (!completed) {
-        // console.warn(`[Timeout] Respuesta de Assistant tardando más de ${TIMEOUT_MS / 1000}s para ${userId}`);
+        console.warn(`[Timeout] Respuesta de Assistant tardando más de ${TIMEOUT_MS / 1000}s para ${userId}`);
         completed = true;
         resolve(null); // Resolvemos con null para que el llamador sepa que hubo timeout
       }
@@ -141,7 +141,7 @@ const getAssistantResponse = async (
       if (!completed) {
         clearTimeout(timeoutId);
         completed = true;
-        // console.error(`[Error] Fallo crítico en safeToAsk para ${userId}:`, error);
+        console.error(`[Error] Fallo crítico en safeToAsk para ${userId}:`, error);
         resolve(null);
       }
     }
@@ -230,7 +230,7 @@ export const processUserMessage = async (
       ctx.from,
       contextId
     );
-    // console.log(`[processUserMessage] 🤖 Respuesta del asistente para ${userId}:`, JSON.stringify(response, null, 2));
+    console.log(`[processUserMessage] 🤖 Respuesta del asistente para ${userId}:`, JSON.stringify(response, null, 2));
     if (!response) {
       await errorReporter.reportError(
         new Error("No se recibió respuesta del asistente."),

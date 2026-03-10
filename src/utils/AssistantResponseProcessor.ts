@@ -40,23 +40,23 @@ export async function waitForActiveRuns(threadId: string) {
             );
             
             if (activeRun) {
-                // console.log(`[AssistantResponseProcessor] [${attempt}/${maxAttempts}] Run activo detectado (${activeRun.id}, estado: ${activeRun.status}).`);
+                console.log(`[AssistantResponseProcessor] [${attempt}/${maxAttempts}] Run activo detectado (${activeRun.id}, estado: ${activeRun.status}).`);
                 
                 // Si el run está en 'requires_action' o 'in_progress' por más de 3 chequeos (aprox 6 segundos), 
                 // intentamos cancelarlo para liberar el hilo.
                 if (activeRun.status === "requires_action" || (activeRun.status === "in_progress" && attempt >= 5)) {
                     requiresActionCount++;
                     if (requiresActionCount >= 2 || attempt >= 7) {
-                        // console.warn(`[AssistantResponseProcessor] Run ${activeRun.id} parece estancado (${activeRun.status}). Cancelando...`);
+                        console.warn(`[AssistantResponseProcessor] Run ${activeRun.id} parece estancado (${activeRun.status}). Cancelando...`);
                         try {
                             await openai.beta.threads.runs.cancel(threadId, activeRun.id);
                         } catch (cancelErr: any) {
                             const msg = cancelErr?.message || String(cancelErr);
                             if (msg.includes('404') || msg.includes('not found')) {
-                                // console.log(`[AssistantResponseProcessor] Run ya no existe, hilo liberado.`);
+                                console.log(`[AssistantResponseProcessor] Run ya no existe, hilo liberado.`);
                                 return;
                             }
-                            // console.error(`[AssistantResponseProcessor] Error al cancelar run:`, cancelErr);
+                            console.error(`[AssistantResponseProcessor] Error al cancelar run:`, cancelErr);
                         }
                     }
                 }
@@ -102,12 +102,11 @@ export const safeToAsk = async (
         const runIdMatch = errorMessage.match(/run_[a-zA-Z0-9]+/);
         if (runIdMatch) {
           const activeRunId = runIdMatch[0];
-          // console.log(`[safeToAsk] Cancelando run ${activeRunId} que bloquea el hilo...`);
+          console.log(`[safeToAsk] Cancelando run ${activeRunId} que bloquea el hilo...`);
           try {
             await openai.beta.threads.runs.cancel(threadId, activeRunId);
-            // console.log(`[safeToAsk] Cancelación enviada para ${activeRunId}. Reintentando inmediatamente...`);
+            console.log(`[safeToAsk] Cancelación enviada para ${activeRunId}. Reintentando inmediatamente...`);
             await new Promise(r => setTimeout(r, 2000));
-            // No incrementamos attempt aquí necesariamente si el run se canceló, para dar otra oportunidad real
             continue; 
           } catch (cancelErr: any) {
             const cMsg = cancelErr?.message || String(cancelErr);
@@ -144,13 +143,13 @@ export const safeToAsk = async (
                 messages: threadMessages as any
             });
             
-            // console.log(`[safeToAsk] Nuevo hilo: ${newThread.id}.`);
+            console.log(`[safeToAsk] Hilo renovado por errores persistentes: ${newThread.id}.`);
             await state.update({ thread_id: newThread.id });
             
             // Un último intento con el nuevo hilo
             return await toAsk(assistantId, message, state);
         } catch (renewalErr: any) {
-            // console.error(`[safeToAsk] Error fatal al renovar hilo:`, renewalErr);
+            console.error(`[safeToAsk] Error fatal al renovar hilo:`, renewalErr);
             throw err; 
         }
       }
@@ -264,22 +263,22 @@ export class AssistantResponseProcessor {
 
         // Log de mensaje saliente al usuario (antes de cualquier filtro)
         if (ctx && ctx.type === 'webchat') {
-            // console.log('[Webchat Debug] Mensaje saliente al usuario (sin filtrar):', textResponse);
+            console.log('[Webchat Debug] Mensaje saliente al usuario (sin filtrar):', textResponse);
         } else {
-            // console.log('[WhatsApp Debug] Mensaje saliente al usuario (sin filtrar):', textResponse);
+            console.log('[WhatsApp Debug] Mensaje entrante del asistente:', textResponse);
         }
         // 1) Extraer bloque [API] ... [/API]
         const apiBlockRegex = /\[API\](.*?)\[\/API\]/is;
         const match = textResponse.match(apiBlockRegex);
         if (match) {
             const jsonStr = match[1].trim();
-            // console.log('[Debug] Bloque [API] detectado:', jsonStr);
+            console.log('[Debug] Bloque [API] detectado:', jsonStr);
             try {
                 jsonData = JSON.parse(jsonStr);
             } catch (e) {
                 jsonData = null;
                 if (ctx && ctx.type === 'webchat') {
-                    // console.log('[Webchat Debug] Error al parsear bloque [API]:', jsonStr);
+                    console.log('[Webchat Debug] Error al parsear bloque [API]:', jsonStr);
                 }
             }
         }
@@ -557,6 +556,8 @@ export class AssistantResponseProcessor {
                 const resumenReserva = reservaId
                     ? `reserva confirmada con ID ${reservaId}`
                     : `No se recibió confirmación de la reserva. Respuesta API: ${JSON.stringify(apiResponse)}`;
+                
+                console.log(`[RESERVA] Enviando resultado a OpenAI para confirmación final: ${resumenReserva}`);
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, resumenReserva, state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) {
                     await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
@@ -569,6 +570,13 @@ export class AssistantResponseProcessor {
                         getAssistantResponse,
                         ASSISTANT_ID
                     );
+                } else {
+                    // FALLBACK: Si OpenAI falla en el paso final, al menos enviamos un mensaje directo al usuario
+                    console.warn('[RESERVA] OpenAI no respondió a la confirmación final. Enviando fallback...');
+                    const fallbackMsg = reservaId 
+                        ? `¡Tu reserva ha sido confirmada con el código ${reservaId}! 🎉`
+                        : `Hubo un inconveniente al finalizar tu reserva. Por favor, consulta por el ID de tu reserva en unos minutos.`;
+                    await flowDynamic([{ body: fallbackMsg }]);
                 }
                 state.reservaEnCurso = false;
                 if (unblockUser) unblockUser();
@@ -683,10 +691,10 @@ export class AssistantResponseProcessor {
                 try {
                     await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
                     if (ctx && ctx.type !== 'webchat') {
-                        // console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
+                        console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
                     }
                 } catch (err) {
-                    // console.error('[WhatsApp Debug] Error en flowDynamic:', err);
+                    console.error('[WhatsApp Debug] Error en flowDynamic:', err);
                 }
             }
         } else if (cleanTextResponse.length > 0) {
@@ -701,10 +709,10 @@ export class AssistantResponseProcessor {
                     try {
                         await flowDynamic([{ body: chunk.trim() }]);
                         if (ctx && ctx.type !== 'webchat') {
-                            // console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
+                            console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
                         }
                     } catch (err) {
-                        // console.error('[WhatsApp Debug] Error en flowDynamic:', err);
+                        console.error('[WhatsApp Debug] Error en flowDynamic:', err);
                     }
                 }
             }
