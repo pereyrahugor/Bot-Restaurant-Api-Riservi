@@ -173,51 +173,30 @@ const createReservationQueue = new ApiQueue(
 );
 
 function limpiarBloquesJSON(texto: string): string {
-    // 1. Preservar bloques especiales temporalmente
-    const specialBlocks: string[] = [];
-    let textoConMarcadores = texto;
+    // 1. Eliminar completamente los bloques de metadatos y API para que no se envíen al usuario
+    // y evitar ecos que activen el bloqueo de seguridad.
+    let limpio = texto;
     
-    // Preservar [DB_QUERY: ...] (Permitiendo espacios opcionales tras el corchete y el separador opcional)
-    textoConMarcadores = textoConMarcadores.replace(/\[\s*DB_QUERY\s*:?\s*[\s\S]*?\]/gi, (match) => {
-        const index = specialBlocks.length;
-        specialBlocks.push(match);
-        return `___SPECIAL_BLOCK_${index}___`;
-    });
-
-    // Preservar [DB: "T":"tabla", "D":"dato"] o [DB{"T":"..."}]
-    textoConMarcadores = textoConMarcadores.replace(/\[\s*DB\s*:?\s*[\s\S]*?\]/gi, (match) => {
-        const index = specialBlocks.length;
-        specialBlocks.push(match);
-        return `___SPECIAL_BLOCK_${index}___`;
-    });
+    // Eliminar [API]...[/API] (Lógica de asistente)
+    limpio = limpio.replace(/\[\s*API\s*\][\s\S]*?\[\/\s*API\s*\]/gi, "");
     
-    // Preservar [API]...[/API] (Tolerante a espacios)
-    textoConMarcadores = textoConMarcadores.replace(/\[\s*API\s*\][\s\S]*?\[\/\s*API\s*\]/gi, (match) => {
-        const index = specialBlocks.length;
-        specialBlocks.push(match);
-        return `___SPECIAL_BLOCK_${index}___`;
-    });
+    // Eliminar [DB_QUERY: ...] y [DB: ...]
+    limpio = limpio.replace(/\[\s*DB_QUERY\s*:?\s*[\s\S]*?\]/gi, "");
+    limpio = limpio.replace(/\[\s*DB\s*:?\s*[\s\S]*?\]/gi, "");
     
-    // 2. Limpiar referencias de OpenAI tipo 【4:0†archivo.pdf】
-    let limpio = textoConMarcadores.replace(/【.*?】/g, "");
-
-    // 2b. Limpiar bloques JSON de "queries" que a veces fuga el asistente de OpenAI (File Search / Web Search)
-    // Se incluye opcionalmente una coma al final por si el asistente lo envía como parte de un array incompleto
-    limpio = limpio.replace(/\{\s*"queries"\s*:\s*\[[\s\S]*?\]\s*\}[\s,]*?/gi, "");
-    
-    // 2c. Limpiar bloques de PDF [PDF: ID]
+    // Eliminar bloques de PDF [PDF: ID]
     limpio = limpio.replace(/\[\s*PDF\s*:\s*[\s\S]*?\]/gi, "");
 
-    // 2d. Filtrar SYSTEM_DB_RESULT o SYSTEM_API_RESULT filtrados por error del asistente
+    // Eliminar SYSTEM_DB_RESULT o SYSTEM_API_RESULT
     limpio = limpio.replace(/\[?\s*SYSTEM_(DB|API)_RESULT[\s\S]*?(?:\]|$)/gi, "");
 
+    // 2. Limpiar referencias de OpenAI tipo 【4:0†archivo.pdf】
+    limpio = limpio.replace(/【.*?】/g, "");
 
-    // 3. Restaurar bloques especiales
-    specialBlocks.forEach((block, index) => {
-        limpio = limpio.replace(`___SPECIAL_BLOCK_${index}___`, block);
-    });
+    // 3. Limpiar bloques JSON de "queries" que a veces fuga el asistente
+    limpio = limpio.replace(/\{\s*"queries"\s*:\s*\[[\s\S]*?\]\s*\}[\s,]*?/gi, "");
     
-    return limpio;
+    return limpio.trim();
 }
 
 function corregirFechaAnioVigente(fechaReservaStr: string): string {
@@ -252,22 +231,20 @@ export class AssistantResponseProcessor {
         if (ctx && ctx.type === 'webchat') {
             console.log('[Webchat Debug] Mensaje entrante del asistente:', response);
         } else {
-            console.log('[WhatsApp Debug] Mensaje entrante del asistente:', response);
+            console.log('[WhatsApp Debug] Analizando respuesta de asistente para:', ctx.from);
             // Si el usuario está bloqueado por una operación API, evitar procesar nuevos mensajes de entrada
-            // pero permitir las llamadas recursivas internas del bot
+            // (como mensajes rápidos del usuario o ecos accidentales), pero permitir las llamadas recursivas internas del bot.
             if (!isRecursive && ctx.from && userApiBlockMap.has(ctx.from)) {
-                console.log(`[API Block] Mensaje ignorado de usuario bloqueado: ${ctx.from}`);
+                console.log(`[API Block] Ignorando entrada (usuario bloqueado en medio de operación API): ${ctx.from}`);
                 return;
             }
         }
         let jsonData: any = null;
         const textResponse = typeof response === "string" ? response : String(response || "");
 
-        // Log de mensaje saliente al usuario (antes de cualquier filtro)
+        // Log de mensaje para seguimiento (opcional, se puede silenciar)
         if (ctx && ctx.type === 'webchat') {
-            console.log('[Webchat Debug] Mensaje saliente al usuario (sin filtrar):', textResponse);
-        } else {
-            console.log('[WhatsApp Debug] Mensaje entrante del asistente:', textResponse);
+            console.log('[Webchat Debug] Contenido respuesta:', textResponse);
         }
         // 1) Extraer bloque [API] ... [/API]
         const apiBlockRegex = /\[API\](.*?)\[\/API\]/is;
