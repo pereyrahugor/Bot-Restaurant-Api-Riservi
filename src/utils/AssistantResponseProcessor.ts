@@ -234,10 +234,11 @@ export class AssistantResponseProcessor {
             console.log('[WhatsApp Debug] Analizando respuesta de asistente para:', ctx.from);
             // Si el usuario está bloqueado por una operación API, evitar procesar nuevos mensajes de entrada
             // (como mensajes rápidos del usuario o ecos accidentales), pero permitir las llamadas recursivas internas del bot.
-            if (!isRecursive && ctx.from && userApiBlockMap.has(ctx.from)) {
-                console.log(`[API Block] Ignorando entrada (usuario bloqueado en medio de operación API): ${ctx.from}`);
-                return;
-            }
+            // BLOQUEO ELIMINADO: Se detectó que interfiere con respuestas de API
+            // if (!isRecursive && ctx.from && userApiBlockMap.has(ctx.from)) {
+            //     console.log(`[API Block] Ignorando entrada (usuario bloqueado en medio de operación API): ${ctx.from}`);
+            //     return;
+            // }
         }
         let jsonData: any = null;
         const textResponse = typeof response === "string" ? response : String(response || "");
@@ -542,6 +543,7 @@ export class AssistantResponseProcessor {
                     : `No se recibió confirmación de la reserva. Respuesta API: ${JSON.stringify(apiResponse)}`;
                 
                 console.log(`[RESERVA] Enviando resultado a OpenAI para confirmación final: ${resumenReserva}`);
+                console.log("respuesta de API RESERVA enviado al asistente");
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, resumenReserva, state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) {
                     await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
