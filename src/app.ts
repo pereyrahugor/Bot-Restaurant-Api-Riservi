@@ -107,6 +107,11 @@ const getAssistantResponse = async (
 ) => {
   const currentDatetimeArg = getArgentinaDatetimeString();
   let systemPrompt = `Fecha, hora y día de la semana de referencia: ${currentDatetimeArg}`;
+  
+  if (process.env.EXTRA_SYSTEM_PROMPT) {
+      systemPrompt += `\nInstrucción de refuerzo: ${process.env.EXTRA_SYSTEM_PROMPT}`;
+  }
+
   if (fallbackMessage) systemPrompt += `\n${fallbackMessage}`;
   if (userPhone) systemPrompt += `\nNúmero de contacto: ${userPhone}`;
 
@@ -114,7 +119,7 @@ const getAssistantResponse = async (
   // Solo envolvemos en un timeout para que el flujo de BuilderBot no se cuelgue infinitamente,
   // pero NO disparamos una segunda petición si la primera tarda.
   
-  return new Promise(async (resolve) => {
+  return new Promise((resolve) => {
     let completed = false;
     const timeoutId = setTimeout(() => {
       if (!completed) {
@@ -124,27 +129,29 @@ const getAssistantResponse = async (
       }
     }, TIMEOUT_MS);
 
-    try {
-      const result = await safeToAsk(
-        assistantId,
-        systemPrompt + "\n" + message,
-        state,
-        userId,
-        errorReporter
-      );
-      if (!completed) {
-        clearTimeout(timeoutId);
-        completed = true;
-        resolve(result);
+    (async () => {
+      try {
+        const result = await safeToAsk(
+          assistantId,
+          systemPrompt + "\n" + message,
+          state,
+          userId,
+          errorReporter
+        );
+        if (!completed) {
+          clearTimeout(timeoutId);
+          completed = true;
+          resolve(result);
+        }
+      } catch (error) {
+        if (!completed) {
+          clearTimeout(timeoutId);
+          completed = true;
+          console.error(`[Error] Fallo crítico en safeToAsk para ${userId}:`, error);
+          resolve(null);
+        }
       }
-    } catch (error) {
-      if (!completed) {
-        clearTimeout(timeoutId);
-        completed = true;
-        console.error(`[Error] Fallo crítico en safeToAsk para ${userId}:`, error);
-        resolve(null);
-      }
-    }
+    })();
   });
 };
 
@@ -913,7 +920,7 @@ const main = async () => {
             const session = webChatManager.getSession(ip);
             const { getOrCreateThreadId, sendMessageToThread } = await import("./utils-web/openaiThreadBridge");
 
-            let replyTextArr = [];
+            const replyTextArr = [];
             const flowDynamic = async (arr) => {
                 if (Array.isArray(arr)) replyTextArr.push(...arr.map(a => a.body));
                 else replyTextArr.push(arr);
