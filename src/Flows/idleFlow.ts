@@ -99,12 +99,12 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                 await handleGroupSending();
                 await addToSheet(data);
                 return endFlow();
-            } else {
-                // console.log('Tipo desconocido/DEFAULT. Procesando como SI_RESUMEN.');
-                await handleGroupSending();
-                await addToSheet(data);
-                return endFlow();
-            }
+            } // } else {
+            //     // console.log('Tipo desconocido/DEFAULT. Procesando como SI_RESUMEN.');
+            //     await handleGroupSending();
+            //     await addToSheet(data);
+            //     return endFlow();
+            // }
 
         } catch (error) {
             console.error("Error al obtener el resumen de OpenAI:", error);
