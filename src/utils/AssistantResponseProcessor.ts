@@ -383,7 +383,7 @@ export class AssistantResponseProcessor {
             // --- VALIDACIÓN DE LÍMITE DE COMENSALES ---
             const currentPartySize = jsonData.partySize;
             if (['#DISPONIBLE#', '#RESERVA#', '#MODIFICAR#'].includes(tipo) && typeof currentPartySize === 'number' && currentPartySize >= 13) {
-                const limitMsg = `Limite de comensales exedido, la cantidad solicitada es para ${currentPartySize} de comensales, derivar a linea Eventos`;
+                const limitMsg = `Limite de comensales excedido, la cantidad solicitada es para ${currentPartySize} de comensales, derivar a linea Eventos`;
                 // console.log(`[Validation] Límite de comensales excedido: ${currentPartySize}`);
                 
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, limitMsg, state, undefined, ctx.from, ctx.from);
@@ -702,7 +702,11 @@ export class AssistantResponseProcessor {
                     if (unblockUser) unblockUser();
                 }
                 // console.log('[API Debug] Respuesta de cancelReservationById:', apiResponse);
-                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
+                const resultMsg = (apiResponse && !apiResponse.error && !apiResponse.errors)
+                    ? "La reserva esta cancelada"
+                    : "No se pudo cancelar la reserva";
+
+                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, resultMsg, state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) {
                     await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                         assistantApiResponse,
@@ -732,7 +736,11 @@ export class AssistantResponseProcessor {
                     if (unblockUser) unblockUser();
                 }
                 // console.log('[API Debug] Respuesta de confirmReservationById:', apiResponse);
-                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, typeof apiResponse === "string" ? apiResponse : JSON.stringify(apiResponse), state, undefined, ctx.from, ctx.from);
+                const resultMsg = (apiResponse && !apiResponse.error && !apiResponse.errors)
+                    ? "La reserva esta confirmada"
+                    : "No se pudo confirmar la reserva";
+
+                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, resultMsg, state, undefined, ctx.from, ctx.from);
                 if (assistantApiResponse) {
                     await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                         assistantApiResponse,
