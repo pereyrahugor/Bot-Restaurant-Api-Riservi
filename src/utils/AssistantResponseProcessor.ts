@@ -306,7 +306,7 @@ export class AssistantResponseProcessor {
     static async analizarYProcesarRespuestaAsistente(
         response: any,
         ctx: any,
-                                                                                                                                                                                         flowDynamic: any,
+        flowDynamic: any,
         state: any,
         provider: any,
         gotoFlow: any,

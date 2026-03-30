@@ -8,7 +8,7 @@
     "start": "node ./dist/app.js",
     "lint": "eslint . --no-ignore",
     "dev": "npm run lint && nodemon ./src/app.ts",
-    "build": "npx rollup -c"
+    "build": "rollup -c"
   },
   "keywords": [],
   "dependencies": {
@@ -40,7 +40,6 @@
     "path": "^0.12.7",
     "pdfkit": "^0.16.0",
     "pino": "^10.1.0",
-    "pnpm": "^10.2.0",
     "qrcode": "^1.5.4",
     "serve-static": "^2.2.0",
     "socket.io": "^4.8.1",
@@ -50,6 +49,10 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-json": "^6.1.0",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-typescript": "^11.1.6",
     "@types/multer": "^1.4.11",
     "@types/node": "^20.17.18",
     "@types/qrcode": "^1.5.5",
@@ -59,7 +62,6 @@
     "eslint-plugin-builderbot": "latest",
     "nodemon": "^3.1.0",
     "rollup": "^4.10.0",
-    "rollup-plugin-typescript2": "^0.36.0",
     "tsx": "^4.7.1",
     "typescript": "^5.7.3"
   },

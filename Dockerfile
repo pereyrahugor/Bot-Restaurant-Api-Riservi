@@ -1,91 +1,54 @@
-# Image size ~ 400MB
+# Step 1: Builder
 FROM node:20-slim AS builder
 
-
 WORKDIR /app
 
+# Copy only what's needed for installation to leverage cache
+COPY package.json package-lock.json* ./
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
-ENV PNPM_HOME=/usr/local/bin
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ git ca-certificates poppler-utils \
+    && update-ca-certificates
 
+# Install all dependencies (including devDeps for build)
+RUN npm install
 
+# Copy context - using .dockerignore to filter
+COPY . .
 
+# Build the project
+RUN npm run build
 
-# Copiar archivos de configuración y dependencias primero para aprovechar la cache
-COPY package*.json ./
-COPY *-lock.yaml ./
-COPY rollup.config.js ./
-COPY tsconfig.json ./
-
-# Instalar dependencias del sistema necesarias para build
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ git ca-certificates poppler-utils && update-ca-certificates
-
-# Instalar dependencias node
-RUN pnpm install
-
-# Copiar el resto del código fuente y carpetas necesarias antes del build
-COPY src/ ./src/
-COPY src/assets/ ./src/assets/
-COPY src/js/ ./src/js/
-COPY src/style/ ./src/style/
-COPY src/utils/ ./src/utils/
-COPY src/utils-web/ ./src/utils-web/
-COPY README.md ./
-COPY nodemon.json ./
-COPY railway.json ./
-
-# Compilar y mostrar el error real en el log de Docker, imprimiendo logs si falla
-RUN pnpm run build || (echo '--- npm-debug.log ---' && cat /app/npm-debug.log || true && echo '--- pnpm-debug.log ---' && cat /app/pnpm-debug.log || true && exit 1)
-
-# Limpiar dependencias de build
-RUN apt-get remove -y python3 make g++ git && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-
-
-
+# Step 2: Deploy
 FROM node:20-slim AS deploy
 
-# Instalar poppler-utils, git y openssh-client en la imagen final para dependencias git-hosted por SSH
-RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils git openssh-client && rm -rf /var/lib/apt/lists/*
-
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils git openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-
-ARG PORT
-
-ENV PORT=3000
-
-EXPOSE $PORT
-
-# Asegurar que la carpeta de credenciales exista
-RUN mkdir -p /app/credentials
-
-
-# Copiar los artefactos necesarios desde builder
-COPY --from=builder /app/src/assets ./src/assets
+# Copy built code and required assets
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/*.json ./
-COPY --from=builder /app/*-lock.yaml ./
-COPY --from=builder /app/src/webchat.html ./src/webchat.html
-COPY --from=builder /app/src/webreset.html ./src/webreset.html
-COPY --from=builder /app/README.md ./
-COPY --from=builder /app/nodemon.json ./
-COPY --from=builder /app/railway.json ./
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/package-lock.json* ./
+COPY --from=builder /app/src/assets ./src/assets
 COPY --from=builder /app/src/js ./src/js
 COPY --from=builder /app/src/style ./src/style
 COPY --from=builder /app/src/html ./src/html
+# Also copy html files from src root
+COPY --from=builder /app/src/*.html ./src/
 
+# Install ONLY production dependencies
+RUN npm install --omit=dev --ignore-scripts
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
-ENV PNPM_HOME=/usr/local/bin
-RUN mkdir /app/tmp
-RUN npm cache clean --force && pnpm install --production --ignore-scripts \
-    && npm install polka @types/polka --legacy-peer-deps \
-    && rm -rf $PNPM_HOME/.npm $PNPM_HOME/.node-gyp
+ENV PORT=3000
+EXPOSE 3000
 
+# Create required directories
+RUN mkdir -p /app/credentials /app/bot_sessions /app/tmp
 
-
-RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -m nodejs
-
-
+# Standard start command
 CMD ["npm", "start"]
