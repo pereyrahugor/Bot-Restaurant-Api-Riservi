@@ -42,7 +42,7 @@ COPY --from=builder /app/src/html ./src/html
 COPY --from=builder /app/src/*.html ./src/
 
 # Install ONLY production dependencies
-RUN npm install --omit=dev --ignore-scripts
+RUN npm install --omit=dev
 
 ENV PORT=3000
 EXPOSE 3000
