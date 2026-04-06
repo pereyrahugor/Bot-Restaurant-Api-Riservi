@@ -383,7 +383,7 @@ export class AssistantResponseProcessor {
             // --- VALIDACIÓN DE LÍMITE DE COMENSALES ---
             const currentPartySize = jsonData.partySize;
             if (['#DISPONIBLE#', '#RESERVA#', '#MODIFICAR#'].includes(tipo) && typeof currentPartySize === 'number' && currentPartySize >= 13) {
-                const limitMsg = `Limite de comensales excedido, la cantidad solicitada es para ${currentPartySize} de comensales, derivar a linea Eventos`;
+                const limitMsg = `Para la cantidad de ${currentPartySize} comensales, por favor contactar a linea de eventos Eventos o grandes grupos +5491133130540, te estaran respondiendo entre 24/48 hs.`;
                 // console.log(`[Validation] Límite de comensales excedido: ${currentPartySize}`);
                 
                 const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, limitMsg, state, undefined, ctx.from, ctx.from);
