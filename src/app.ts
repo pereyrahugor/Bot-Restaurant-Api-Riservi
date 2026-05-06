@@ -328,7 +328,7 @@ const main = async () => {
         
         setGroupProvider(createProvider(BaileysProvider, {
             //version: [2, 3000, 1030817285],  //version actual, precaria
-            version: [2, 3000, 1038839325], //ultima version para test
+            version: [2, 3000, 1038711718], //ultima version para test
             groupsIgnore: false,
             readStatus: false,
             disableHttpServer: true
