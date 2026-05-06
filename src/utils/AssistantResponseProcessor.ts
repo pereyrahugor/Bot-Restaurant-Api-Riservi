@@ -26,6 +26,8 @@ export const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
+const threadCache = new Map<string, any>();
+
 export async function waitForActiveRuns(threadId: string) {
     if (!threadId) return;
     try {
@@ -328,6 +330,15 @@ export class AssistantResponseProcessor {
             // }
         }
         let jsonData: any = null;
+        // Obtener threadId del estado (si existe)
+        const threadId = ctx?.thread_id || (state && typeof state.get === 'function' ? state.get('thread_id') : null);
+        // Verificar si el hilo ya tiene registrado que el límite de comensales fue excedido
+        if (threadId && threadCache.get(threadId)?.limitExceeded) {
+            console.log(`[AssistantResponseProcessor] Límite de comensales ya notificado para thread ${threadId}. Ignorando procesamiento adicional.`);
+            return; // Abortamos el procesamiento para evitar reintentos
+        }
+        // Continuamos con la lógica existente
+
         const textResponse = typeof response === "string" ? response : String(response || "");
 
         // Log de mensaje para seguimiento (opcional, se puede silenciar)
@@ -378,26 +389,17 @@ export class AssistantResponseProcessor {
             if (ctx && ctx.type !== 'webchat') {
                 console.log('[WhatsApp Debug] Antes de enviar con flowDynamic o procesar API:', jsonData, ctx.from);
             }
+            // Extract the type of the API block
             const tipo = jsonData.type.trim();
 
             // --- VALIDACIÓN DE LÍMITE DE COMENSALES ---
             const currentPartySize = jsonData.partySize;
-            if (['#DISPONIBLE#', '#RESERVA#', '#MODIFICAR#'].includes(tipo) && typeof currentPartySize === 'number' && currentPartySize >= 13) {
+            if (["#DISPONIBLE#", "#RESERVA#", "#MODIFICAR#"].includes(tipo) && typeof currentPartySize === "number" && currentPartySize >= 13) {
                 const limitMsg = `Para la cantidad de ${currentPartySize} comensales, por favor contactar a linea de eventos Eventos o grandes grupos +5491133130540, te estaran respondiendo entre 24/48 hs.`;
-                // console.log(`[Validation] Límite de comensales excedido: ${currentPartySize}`);
-                
-                const assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, limitMsg, state, undefined, ctx.from, ctx.from);
-                    await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                        assistantApiResponse,
-                        ctx,
-                        flowDynamic,
-                        state,
-                        provider,
-                        gotoFlow,
-                        getAssistantResponse,
-                        ASSISTANT_ID,
-                        true
-                    );
+                await flowDynamic([{ body: limitMsg }]);
+                if (threadId) {
+                    threadCache.set(threadId, { ...threadCache.get(threadId), limitExceeded: true });
+                }
                 if (unblockUser) unblockUser();
                 return;
             }
@@ -407,7 +409,15 @@ export class AssistantResponseProcessor {
                 // Solo usar la fecha/hora corregida para contexto del asistente, no para la reserva
                 const fechaCorregida = corregirFechaAnioVigente(fechaOriginal);
                 const fechaArgentina = toArgentinaTime(fechaCorregida);
-                // NO modificar jsonData.date, mantener la hora original del usuario
+            // Al finalizar el procesamiento exitoso (por ejemplo, cuando se envía una respuesta al usuario), limpiar flag de límite
+            if (threadId && threadCache.has(threadId)) {
+                const cached = threadCache.get(threadId);
+                if (cached && cached.limitExceeded) {
+                    // Opcional: remover flag para permitir nuevas reservas en el mismo hilo después de completar la interacción
+                    delete cached.limitExceeded;
+                    threadCache.set(threadId, cached);
+                }
+            }
                 // Control de fecha futura eliminado (ya validado antes)
                 // console.log('[API Debug] Llamada a checkAvailability:', jsonData.date, jsonData.partySize);
                 let apiResponse;
@@ -757,7 +767,6 @@ export class AssistantResponseProcessor {
                 return;
             }
         }
-
         // Si no hubo bloque JSON válido, enviar el texto limpio
     const cleanTextResponse = limpiarBloquesJSON(textResponse).trim();
         // Lógica especial para reserva: espera y reintento
@@ -802,6 +811,9 @@ export class AssistantResponseProcessor {
                 }
             }
         }
+        // Limpiar cache del hilo al finalizar el procesamiento de esta respuesta
+        if (threadId) {
+            threadCache.delete(threadId);
+        }
     }
 }
-
