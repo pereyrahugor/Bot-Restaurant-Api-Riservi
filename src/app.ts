@@ -296,16 +296,19 @@ export const handleQueue = async (userId) => {
 
 // Main function to initialize the bot and load Google Sheets data
 const main = async () => {
-    // 1. Limpiar QR antiguo al inicio
-    const qrPath = path.join(process.cwd(), 'bot.qr.png');
-    if (fs.existsSync(qrPath)) {
-        try {
-            fs.unlinkSync(qrPath);
-            // console.log('🗑️ [Init] QR antiguo eliminado.');
-        } catch (e) {
-            // console.error('⚠️ [Init] No se pudo eliminar QR antiguo:', e);
+    // 1. Limpiar QRs antiguos al inicio para evitar mostrar estados obsoletos
+    const qrsToClean = ['bot.qr.png', 'bot.groups.qr.png'];
+    qrsToClean.forEach(file => {
+        const p = path.join(process.cwd(), file);
+        if (fs.existsSync(p)) {
+            try {
+                fs.unlinkSync(p);
+                console.log(`[Init] Limpieza inicial: ${file} eliminado.`);
+            } catch (e) {
+                console.error(`[Init] Error limpiando ${file}:`, e);
+            }
         }
-    }
+    });
 
     // 2. Restaurar sesión de grupos desde DB
     try {
@@ -332,34 +335,54 @@ const main = async () => {
 
         // Configurar listeners redundantes para QR
         const handleQR = async (qrString: string) => {
-            if (qrString) {
-                // console.log(`⚡ [GroupSync] QR detectado (largo: ${qrString.length}). Generando bot.groups.qr.png...`);
+            if (qrString && typeof qrString === 'string') {
+                console.log(`⚡ [GroupSync] Generando bot.groups.qr.png (largo: ${qrString.length})...`);
                 const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
                 await QRCode.toFile(qrPath, qrString, { scale: 10, margin: 2 });
-                // console.log(`✅ [GroupSync] QR guardado en ${qrPath}`);
+                console.log(`✅ [GroupSync] QR guardado exitosamente.`);
+            } else if (qrString) {
+                console.warn('⚠️ [GroupSync] Se recibió un QR que no es string:', typeof qrString);
             }
         };
 
+        const extractQR = (payload: any) => {
+            if (typeof payload === 'string') return payload;
+            return payload?.qr || payload?.payload?.qr || payload?.code || payload?.payload?.code;
+        }
+
         groupProvider.on('require_action', async (payload: any) => {
-            // console.log('⚡ [GroupSync] require_action received.');
-            const qr = (typeof payload === 'string') ? payload : (payload?.qr || payload?.payload?.qr || payload?.code);
+            console.log('⚡ [GroupSync] require_action received.');
+            const qr = extractQR(payload);
             await handleQR(qr);
         });
 
-        groupProvider.on('qr', async (qr: string) => {
-            // console.log('⚡ [GroupSync] event qr received.');
+        groupProvider.on('auth_require', async (payload: any) => {
+            console.log('⚡ [GroupSync] auth_require received.');
+            const qr = extractQR(payload);
             await handleQR(qr);
         });
 
-        groupProvider.on('auth_require', async (qr: string) => {
-            // console.log('⚡ [GroupSync] event auth_require received.');
-            await handleQR(qr);
+        groupProvider.on('qr', async (qr: any) => {
+            console.log('⚡ [GroupSync] event qr received.');
+            const qrStr = extractQR(qr);
+            await handleQR(qrStr);
         });
 
         groupProvider.on('ready', () => {
-             // console.log('✅ [GroupSync] Motor de grupos conectado satisfactoriamente.');
+             console.log('✅ [GroupSync] Motor de grupos conectado satisfactoriamente.');
              const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
-             if (fs.existsSync(qrPath)) fs.unlinkSync(qrPath);
+             if (fs.existsSync(qrPath)) {
+                 fs.unlinkSync(qrPath);
+                 console.log('🗑️ [GroupSync] QR temporal eliminado tras conexión exitosa.');
+             }
+        });
+
+        groupProvider.on('auth_failure', (err) => {
+            console.error('❌ [GroupSync] Error de autenticación:', err);
+        });
+
+        groupProvider.on('error', (err) => {
+            console.error('❌ [GroupSync] Error en el provider de grupos:', err);
         });
 
         // Forzar arranque del motor secundario
