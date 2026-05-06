@@ -327,7 +327,8 @@ const main = async () => {
         // console.log('📡 [GroupSync] Creando instancia de motor de grupos (Baileys)...');
         
         setGroupProvider(createProvider(BaileysProvider, {
-            // version: [2, 3000, 1030817285],
+            //version: [2, 3000, 1030817285],  //version actual, precaria
+            version: [2, 3000, 1038839325], //ultima version para test
             groupsIgnore: false,
             readStatus: false,
             disableHttpServer: true
